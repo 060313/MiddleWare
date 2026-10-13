@@ -1,6 +1,6 @@
 #include "RequestCodec.h"
 
-namespace service {
+namespace proto {
 
 bool RequestCodec::decode(const std::string& frame,
                           common::MessageType& type,
@@ -30,4 +30,4 @@ std::string RequestCodec::encodeSystemFeature(const common::SystemFeature& featu
     return std::string();
 }
 
-}  // namespace service
+}  // namespace proto

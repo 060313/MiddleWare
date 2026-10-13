@@ -6,7 +6,7 @@
 #include "RequestDispatcher.h"
 
 int main() {
-    service::RequestCodec codec;
+    proto::RequestCodec codec;
 
     const std::string frame = codec.encode(common::MessageType::GetState, "{}");
     common::MessageType type = common::MessageType::Unknown;

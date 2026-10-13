@@ -12,7 +12,7 @@ ServiceInterface::ServiceInterface(std::shared_ptr<agent::SchedManager> manager,
       m_dispatcher(nullptr),
       m_codec(nullptr) {
     // TODO: m_dispatcher = make_unique<RequestDispatcher>(m_manager, m_monitor);
-    //       m_codec     = make_unique<RequestCodec>();
+    //       m_codec     = make_unique<proto::RequestCodec>();
 }
 
 ServiceInterface::~ServiceInterface() = default;

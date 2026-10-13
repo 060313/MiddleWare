@@ -13,10 +13,13 @@ class SchedManager;
 class SystemMonitor;
 }  // namespace agent
 
+namespace proto {
+class RequestCodec;
+}  // namespace proto
+
 namespace service {
 
 class RequestDispatcher;
-class RequestCodec;
 
 class ServiceInterface {
 public:
@@ -40,7 +43,7 @@ private:
     std::shared_ptr<agent::SchedManager>  m_manager;
     std::shared_ptr<agent::SystemMonitor> m_monitor;
     std::unique_ptr<RequestDispatcher>    m_dispatcher;
-    std::unique_ptr<RequestCodec>         m_codec;
+    std::unique_ptr<proto::RequestCodec>  m_codec;
     int  m_listenFd = -1;    // UDS 监听描述符
     int  m_epollFd  = -1;    // epoll 实例
     bool m_running  = false;

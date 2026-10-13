@@ -2,12 +2,15 @@
 
 // 报文编解码：长度前缀(4B) + 类型头(4B) + JSON 载荷。
 // 见《软件详细设计文档》5.2。
+//
+// 归属 proto 模块：帧格式是 schedd（服务端）与 schedctl（客户端）之间的共同契约，
+// 两侧必须链接同一份实现 —— 各写一份，格式一改就会静默失配。
 
 #include <string>
 
 #include "Types.h"
 
-namespace service {
+namespace proto {
 
 class RequestCodec {
 public:
@@ -23,4 +26,4 @@ public:
     std::string encodeSystemFeature(const common::SystemFeature& feature);
 };
 
-}  // namespace service
+}  // namespace proto

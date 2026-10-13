@@ -7,7 +7,9 @@ add_library(sched_system STATIC
 
 target_include_directories(sched_system PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_compile_features(sched_system PUBLIC cxx_std_17)
-target_link_libraries(sched_system PUBLIC sched_tool sched_monitor)
+# SystemManager 直接使用 common 的 SnapshotRegion / StateSnapshot，
+# 显式声明而不依赖 sched_tool → sched_common 的传递可见性。
+target_link_libraries(sched_system PUBLIC sched_tool sched_monitor sched_common)
 
 if(SCHED_BUILD_TESTS)
   add_executable(system_test test/system_test.cpp)

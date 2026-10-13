@@ -33,6 +33,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # ---------------------------------------------------------------- 子模块（自下而上）
 add_subdirectory(common)   # sched_common
+add_subdirectory(proto)    # sched_proto（schedd / schedctl 共用的帧编解码）
 add_subdirectory(tool)     # sched_tool
 add_subdirectory(monitor)  # sched_monitor
 add_subdirectory(system)   # sched_system
