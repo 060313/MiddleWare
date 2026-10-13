@@ -76,23 +76,3 @@ make docker-shell   # 进入 openEuler 容器内构建（WSL 无 cmake 时用）
 每个模块固定三件套：`include/`（对外头文件）、`src/`（实现）、`CMakeLists.txt`
 （`add_library` + `target_include_directories(PUBLIC include)`），并在顶层
 `CMakeLists.txt` 的 `add_subdirectory` 列表中按依赖顺序登记。
-
-## 当前状态
-
-骨架阶段：头文件已按详细设计 6.2 / 6.3 写出完整类声明；`src/*.cpp` 为可编译的
-空实现（函数体带 `TODO` 标记），后续逐个填充。已给出真实实现的仅：`toString(SchedMode)`、
-`sched::INpu::Create()` 工厂、各构造函数与析构函数。
-
-验证：`-Wall -Wextra -Wpedantic` 下 35 个 `.cpp` 全部通过；CMake configure + build
-47/47 成功；`ctest` 4/4 通过。
-
-## ⚠️ 与详细设计文档的一处偏离：`system` 命名空间
-
-详细设计中 System 子系统的命名空间写作 `system::`。该名称在 C++ 中**不可用**：
-`<stdlib.h>` 在全局命名空间声明了 `int system(const char*)`，而 `<string>` / `<memory>`
-等标准库头会间接引入 `<cstdlib>`，于是 `namespace system` 与函数 `system` 冲突
-（glibc 与 MinGW 均如此，属真实编译错误而非平台差异）。
-
-**处理**：命名空间改用 `syscore::`，目录名仍为 `system/`，类名不变
-（`syscore::SystemInterface`、`syscore::SystemManager`、`syscore::OsMonitor`）。
-其余子系统命名空间 `service::`、`agent::`、`common::`、`sched::`、`monitor::`、`cli::` 均无冲突。
