@@ -1,0 +1,30 @@
+# systemd 托管单元：把本文件安装到 /usr/lib/systemd/system/schedd.service
+# 见《软件详细设计文档》7.2 与需求文档 UC5。
+# 注意：Type=simple，中间件内部不要调用 daemon()。
+
+[Unit]
+Description=CPU+XPU Heterogeneous Scheduling Middleware (schedd)
+Documentation=file:/usr/share/doc/schedd/README.md
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/schedd --config /etc/schedd/schedd.conf
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+
+# 设备与运行时目录
+RuntimeDirectory=schedd
+RuntimeDirectoryMode=0755
+
+# 资源与安全
+LimitNOFILE=65536
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=schedd
+
+[Install]
+WantedBy=multi-user.target

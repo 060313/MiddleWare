@@ -1,0 +1,27 @@
+{
+  "_comment": "Python 训练侧与 C++ 运行侧之间的接头契约，见《软件详细设计文档》7.3。冻结后两侧不得单独修改。",
+  "contract_version": "1.0.0",
+  "input_dim": 8,
+  "output_dim": 5,
+  "state_bounds": {
+    "fields": [
+      "ucpu",
+      "unpu_core0",
+      "unpu_core1",
+      "unpu_core2",
+      "cpu_freq_ratio",
+      "npu_freq_ratio",
+      "batch_size_norm",
+      "seq_len_norm"
+    ],
+    "lower": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "upper": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  },
+  "actions": [
+    { "index": 0, "name": "low",        "cpu_share": 0.25, "batch_size": 1,  "cpu_freq_level": 0, "npu_freq_level": 0 },
+    { "index": 1, "name": "cpu_heavy",  "cpu_share": 0.75, "batch_size": 2,  "cpu_freq_level": 2, "npu_freq_level": 1 },
+    { "index": 2, "name": "npu_heavy",  "cpu_share": 0.25, "batch_size": 4,  "cpu_freq_level": 1, "npu_freq_level": 2 },
+    { "index": 3, "name": "balanced",   "cpu_share": 0.50, "batch_size": 2,  "cpu_freq_level": 1, "npu_freq_level": 1 },
+    { "index": 4, "name": "max_perf",   "cpu_share": 1.00, "batch_size": 8,  "cpu_freq_level": 2, "npu_freq_level": 2 }
+  ]
+}
