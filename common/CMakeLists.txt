@@ -1,9 +1,10 @@
-# common —— 公共类型 / 共享内存状态快照 / 配置解析
+# common —— 公共类型 / 共享内存状态快照 / 配置解析 / 极简 JSON
 add_library(sched_common STATIC
   src/Types.cpp
   src/StateSnapshot.cpp
   src/SnapshotRegion.cpp
   src/ConfigLoader.cpp
+  src/Json.cpp
 )
 
 target_include_directories(sched_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

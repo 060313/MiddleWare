@@ -42,6 +42,11 @@ add_subdirectory(service)  # sched_service
 add_subdirectory(app)      # schedd
 add_subdirectory(cli)      # schedctl
 
+if(SCHED_BUILD_TESTS)
+  # 批次验收测试：按详细设计 §6.6.4 的实现批次组织，跨模块，故置于顶层。
+  add_subdirectory(test)   # b1_test
+endif()
+
 # ---------------------------------------------------------------- 可执行产物统一放 build/bin
 set_target_properties(schedd schedctl PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
