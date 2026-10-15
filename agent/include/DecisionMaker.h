@@ -1,49 +1,45 @@
-#pragma once
+// SPDX-License-Identifier: MIT
+// DecisionMaker —— 推理器 · Agent 子系统 · private（详见详细设计 §7.7）
+//
+// 职责：特征编码 → DQN 推理（经 ONNXruntime）→ 动作解码。
+// 设计要点：
+//   - modelPath 为配置注入属性，空串表示未就绪；
+//   - load 无参（路径取自 modelPath）；isReady 判断模型是否加载成功。
 
-// ONNX Runtime 封装：加载模型并执行推理。
-// 见《软件详细设计文档》5.3、6.3。
-// OrtHandles 采用 pimpl：不暴露 onnxruntime 头文件，缺失依赖时仍可编译。
+#ifndef SCHED_AGENT_DECISIONMAKER_H
+#define SCHED_AGENT_DECISIONMAKER_H
 
-#include <chrono>
-#include <memory>
-#include <optional>
 #include <string>
 
-#include "Types.h"
+#include "common/include/SchedTypes.h"
 
-namespace agent {
+namespace sched {
 
-class FeatureEncoder;
-class ActionDecoder;
+class ONNXruntime;
 
 class DecisionMaker {
 public:
-    DecisionMaker();
+    explicit DecisionMaker(ONNXruntime* runtime);
     ~DecisionMaker();
 
-    DecisionMaker(const DecisionMaker&) = delete;
-    DecisionMaker& operator=(const DecisionMaker&) = delete;
+    // 判断模型是否已成功加载。
+    bool isReady() const;
 
-    // 前置：modelPath 可读；后置：m_ready 表示是否可用
-    bool load(const std::string& modelPath, const std::string& contractPath);
+    // 加载模型建会话（路径取自 modelPath_）。
+    bool load();
 
-    // 前置：m_ready；超时返回 nullopt
-    std::optional<common::Decision> infer(const common::TaskFeature& task,
-                                          const common::SystemFeature& sys);
+    // 执行一次推理。前置：isReady() == true。
+    Decision decide(const SystemFeature& feature);
 
-    bool ready() const { return m_ready; }
-
-    void setTimeout(std::chrono::microseconds t) { m_timeout = t; }
-    std::chrono::microseconds timeout() const { return m_timeout; }
+    // 配置注入模型路径（装配期调用）。
+    void setModelPath(const std::string& path);
 
 private:
-    struct OrtHandles;                          // ONNX Runtime 句柄（定义在 .cpp）
-
-    std::unique_ptr<FeatureEncoder>  m_encoder;
-    std::unique_ptr<ActionDecoder>   m_decoder;
-    std::unique_ptr<OrtHandles>      m_ort;
-    std::chrono::microseconds        m_timeout{5000};
-    bool                             m_ready = false;
+    ONNXruntime* runtime_ = nullptr;         // 依赖：推理引擎封装
+    std::string modelPath_;                  // ONNX 模型路径（配置注入）
+    bool ready_ = false;                     // 就绪标志
 };
 
-}  // namespace agent
+} // namespace sched
+
+#endif // SCHED_AGENT_DECISIONMAKER_H

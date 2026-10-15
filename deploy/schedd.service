@@ -1,6 +1,7 @@
 # systemd 托管单元：把本文件安装到 /usr/lib/systemd/system/schedd.service
-# 见《软件详细设计文档》7.2 与需求文档 UC5。
-# 注意：Type=simple，中间件内部不要调用 daemon()。
+# 见《软件详细设计文档》与需求文档 UC5。
+# 注意：Type=simple，中间件内部不要调用 daemon()（SIGHUP 已被接管，
+#       若使用 ExecReload=kill -HUP 需在进程内自行处理）。
 
 [Unit]
 Description=CPU+XPU Heterogeneous Scheduling Middleware (schedd)

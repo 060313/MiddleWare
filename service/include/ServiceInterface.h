@@ -1,52 +1,56 @@
-#pragma once
+// SPDX-License-Identifier: MIT
+// ServiceInterface —— 门面类 · Service 子系统 · public（详见详细设计 §7.1）
+//
+// 职责：Service 子系统对外门面（唯一直接对接界面的设计类）。
+//       受理推理请求、查询系统状态、切换模型，并掌管 UDS 服务启停。
+// 设计要点：
+//   - schedManager 关联构造注入；
+//   - socketPath 为全系统唯一存放点，调用 UDSService 时传参；
+//   - taskAsk / getSystemState 为同步语义（阻塞至结果返回）。
 
-// Service 子系统：唯一对外通信入口（UDS），类可见性 public。
-// 见《软件详细设计文档》5.2。职责：创建/绑定/监听套接字、epoll 事件循环、accept/读写。
+#ifndef SCHED_SERVICE_SERVICEINTERFACE_H
+#define SCHED_SERVICE_SERVICEINTERFACE_H
 
-#include <memory>
 #include <string>
 
-#include "Types.h"
+#include "common/include/SchedTypes.h"
 
-namespace agent {
-class SchedManager;
-class SystemMonitor;
-}  // namespace agent
+namespace sched {
 
-namespace proto {
-class RequestCodec;
-}  // namespace proto
-
-namespace service {
-
-class RequestDispatcher;
+class schedManager;
+class UDSService;
 
 class ServiceInterface {
 public:
-    ServiceInterface(std::shared_ptr<agent::SchedManager> manager,
-                     std::shared_ptr<agent::SystemMonitor> monitor);
+    explicit ServiceInterface(schedManager* manager);
     ~ServiceInterface();
 
-    ServiceInterface(const ServiceInterface&) = delete;
-    ServiceInterface& operator=(const ServiceInterface&) = delete;
+    // 受理一次推理请求 → 转交 schedManager → 返回其产出。
+    TaskResult taskAsk(const TaskRequest& request);
 
-    // 绑定并监听 UDS，随后进入 epoll 事件循环（阻塞直到 stop()）
-    bool run(const std::string& socketPath);
+    // 取系统特征快照 → 转交 schedManager（其经 systemMonitor 取特征）。
+    SystemFeaturedState getSystemState();
 
-    // 请求停止事件循环（供信号处理器调用）
+    // 切换模型 → 转交 schedManager，由其后置校验并热切换。
+    bool setModel(const std::string& modelName);
+
+    // 装配 UDSService（传 socketPath）→ 监听 → 置 running。
+    bool start();
+
+    // 置 running = false → 关闭端点与连接 → 唤醒服务循环。
     void stop();
 
-private:
-    bool setupListener(const std::string& socketPath);
-    void handleReadable(int clientFd);
+    void setSocketPath(const std::string& path) { socketPath_ = path; }
+    const std::string& socketPath() const { return socketPath_; }
+    bool running() const { return running_; }
 
-    std::shared_ptr<agent::SchedManager>  m_manager;
-    std::shared_ptr<agent::SystemMonitor> m_monitor;
-    std::unique_ptr<RequestDispatcher>    m_dispatcher;
-    std::unique_ptr<proto::RequestCodec>  m_codec;
-    int  m_listenFd = -1;    // UDS 监听描述符
-    int  m_epollFd  = -1;    // epoll 实例
-    bool m_running  = false;
+private:
+    schedManager* manager_ = nullptr;  // 关联，构造装配注入
+    bool running_ = false;             // 服务运行标志
+    std::string socketPath_;           // 全系统单存于此
+    UDSService* uds_ = nullptr;        // 依赖：UDS 服务（装配期创建）
 };
 
-}  // namespace service
+} // namespace sched
+
+#endif // SCHED_SERVICE_SERVICEINTERFACE_H

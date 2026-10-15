@@ -1,27 +1,29 @@
-#pragma once
+// SPDX-License-Identifier: MIT
+// DecisionExecutor —— 执行器 · Agent 子系统 · private（详见详细设计 §7.8）
+//
+// 职责：将决策动作组拆解为逐设备动作并施加（调频 / 批大小）。
+// 设计要点：
+//   - 无设计层属性（设备访问通道由实现层提供，不入设计层）；
+//   - 结果与动作严格对位、大小恒等；单设备失败不短路。
 
-// 决策落地：拆解为设备动作并校验结果。
-// 见《软件详细设计文档》4.4、5.3。
+#ifndef SCHED_AGENT_DECISIONEXECUTOR_H
+#define SCHED_AGENT_DECISIONEXECUTOR_H
 
-#include <memory>
+#include <vector>
 
-#include "Types.h"
+#include "common/include/SchedTypes.h"
 
-namespace agent {
-
-class SystemMonitor;
+namespace sched {
 
 class DecisionExecutor {
 public:
-    explicit DecisionExecutor(std::shared_ptr<SystemMonitor> monitor);
-    ~DecisionExecutor();
+    DecisionExecutor() = default;
+    ~DecisionExecutor() = default;
 
-    // 把 Decision 拆成 CPU / NPU 动作逐个下发，汇总为 ActionInfo
-    common::ActionInfo exec(const common::TaskFeature& task,
-                            const common::Decision& decision);
-
-private:
-    std::shared_ptr<SystemMonitor> m_monitor;
+    // 遍历动作 → 逐设备施加 → 收集结果，不因单个失败中断。
+    std::vector<ExecResult> execDecision(const Decision& decision);
 };
 
-}  // namespace agent
+} // namespace sched
+
+#endif // SCHED_AGENT_DECISIONEXECUTOR_H

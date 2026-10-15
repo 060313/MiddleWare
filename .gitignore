@@ -1,68 +1,25 @@
-# ═══════════════════════════════════════════════════════════════════
-# CPU+XPU 异构调度中间件 —— Git 忽略规则
-#
-# 设计原则：
-#   1. 只忽略「可由源码 / 配置重新生成」的东西（构建产物、缓存、IDE 状态）
-#   2. 绝不忽略交付物：源码、设计文档、模型与契约、Dockerfile、CMakeLists
-#   3. 构建产物清单与 .dockerignore 保持一致，避免两边说法不一
-# ═══════════════════════════════════════════════════════════════════
-
-# ── 构建目录 ─────────────────────────────────────────────────────
-# 容器内 make 生成的 build/ 会通过 bind mount 直接出现在这里，必须忽略
+# 构建产物
 build/
-build-*/
-_build/
-bin/
-out/
-
-# ── 编译中间产物 ─────────────────────────────────────────────────
 *.o
 *.a
 *.so
-*.so.*
-*.d
-*.dwo
-
-# 覆盖率
-*.gcda
-*.gcno
-*.gcov
-
-# ── 可执行文件 ───────────────────────────────────────────────────
-# CMake 产物都落在 build/ 下，这里是万一就地构建的兜底
-/schedd
-/schedctl
+schedd
 *_test
 
-# ── CMake 生成物（万一在源码树里就地构建）────────────────────────
-CMakeCache.txt
-CMakeFiles/
-CMakeUserPresets.json
-cmake_install.cmake
-CTestTestfile.cmake
-compile_commands.json
-Testing/
-install_manifest.txt
-
-# ── IDE / 编辑器 ─────────────────────────────────────────────────
+# 编辑器 / IDE
 .vscode/
 .idea/
-.cache/
-.clangd/
 *.swp
-*.swo
 *~
 
-# ── Python（仓库里的辅助脚本）────────────────────────────────────
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-
-# ── 操作系统 ─────────────────────────────────────────────────────
+# 系统
 .DS_Store
-Thumbs.db
-desktop.ini
 
-# ── 本地解压的 ONNX Runtime SDK（可选依赖，不入库）───────────────
-onnxruntime/
+# ONNX 模型产物（训练侧产出，不入库）
+*.onnx
+
+# 日志
+*.log
+
+software-degin-documents
+software-degin-documents/*

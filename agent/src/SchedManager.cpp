@@ -1,36 +1,53 @@
-#include "SchedManager.h"
+// SPDX-License-Identifier: MIT
+// schedManager 实现（骨架 —— 待填充）
+//
+// TODO(实现层)：
+//   - makeDecision()：monitor_->getFeature() → maker_->decide() → executor_->execDecision()
+//                     → 组装 TaskResult；失败调 handleDecideFailure()
+//   - getFeature()：monitor_->getFeature() + 当前 model_ 组装 SystemFeaturedState
+//   - setModel()：白名单校验 → 非 static 时 maker_->isReady() 判断
+//                 → 新建会话加载新模型 → 成功才替换 model_，失败丢弃
+//   - handleDecideFailure()：++failCount_；达阈值 N 则兜底（降级 static）并重置计数
 
-#include "DecisionExecutor.h"
-#include "DecisionMaker.h"
-#include "SystemMonitor.h"
+#include "agent/include/SchedManager.h"
 
-namespace agent {
+#include "agent/include/DecisionExecutor.h"
+#include "agent/include/DecisionMaker.h"
+#include "agent/include/SystemMonitor.h"
 
-SchedManager::SchedManager()
-    : m_monitor(nullptr), m_maker(nullptr), m_executor(nullptr) {
-    // TODO: 装配 SystemMonitor（依赖 syscore::SystemInterface）、
-    //       DecisionMaker、DecisionExecutor；从配置读取初始模式与推理超时
+namespace sched {
+
+schedManager::schedManager(systemMonitor* monitor,
+                           decisionMaker* maker,
+                           decisionExecutor* executor)
+    : monitor_(monitor), maker_(maker), executor_(executor) {}
+
+schedManager::~schedManager() = default;
+
+TaskResult schedManager::makeDecision(const TaskRequest& request) {
+    // TODO(实现层)
+    (void)request;
+    return {};
 }
 
-SchedManager::~SchedManager() = default;
-
-common::ActionInfo SchedManager::handleTask(const common::TaskFeature& task) {
-    // TODO: 读锁校验模式；auto → getFeature + infer + exec；
-    //       static → 固定规则；off → 仅返回状态摘要
-    common::ActionInfo info;
-    info.taskId = task.taskId;
-    return info;
+SystemFeaturedState schedManager::getFeature() {
+    // TODO(实现层)
+    return {};
 }
 
-bool SchedManager::setMode(common::SchedMode mode) {
-    // TODO: 校验模式合法；off→auto/static 需 m_maker->ready()；加写锁更新 m_mode
-    (void)mode;
+std::string schedManager::getModel() const {
+    return model_;
+}
+
+bool schedManager::setModel(const std::string& modelName) {
+    // TODO(实现层)
+    (void)modelName;
     return false;
 }
 
-common::SchedMode SchedManager::mode() const {
-    // TODO: 加读锁返回 m_mode
-    return m_mode;
+void schedManager::handleDecideFailure() {
+    // TODO(实现层)
+    ++failCount_;
 }
 
-}  // namespace agent
+} // namespace sched

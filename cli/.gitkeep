@@ -1,0 +1,5 @@
+# 界面设计（schedctl）—— 待建
+#
+# 依据《用户界面设计文档》，界面层精简为 3 元素：
+#   CtlMain / CtlClient / SystemdCtl
+# 本目录暂为空占位，待界面设计落地后填充。

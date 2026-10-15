@@ -1,28 +1,27 @@
-#include "SystemInterface.h"
+// SPDX-License-Identifier: MIT
+// SystemInterface 实现（骨架 —— 待填充）
+//
+// TODO(实现层)：getInfo / apply 均为对 mgr_ 的转发
 
-#include "SystemManager.h"
+#include "system/include/SystemInterface.h"
 
-namespace syscore {
+#include "system/include/SystemManager.h"
 
-SystemInterface::SystemInterface() : m_manager(std::make_unique<SystemManager>()) {}
+namespace sched {
+
+SystemInterface::SystemInterface(SystemManager* mgr) : mgr_(mgr) {}
 
 SystemInterface::~SystemInterface() = default;
 
-bool SystemInterface::getInfo(common::SystemFeature& out) {
-    // TODO: 委派 m_manager->collect(out)
-    (void)out;
+SystemInfo SystemInterface::getInfo() {
+    // TODO(实现层)
+    return {};
+}
+
+bool SystemInterface::apply(const DeviceAction& action) {
+    // TODO(实现层)
+    (void)action;
     return false;
 }
 
-common::ResultInfo SystemInterface::applyAction(const common::DeviceAction& action) {
-    // TODO: 委派 m_manager->applyAction(action)
-    (void)action;
-    return common::ResultInfo{};
-}
-
-common::StateSnapshot* SystemInterface::snapshot() {
-    // TODO: 返回 m_manager->snapshot()
-    return nullptr;
-}
-
-}  // namespace syscore
+} // namespace sched

@@ -1,36 +1,33 @@
-#pragma once
+// SPDX-License-Identifier: MIT
+// SystemInterface —— 门面类 · System 子系统 · public（详见详细设计 §7.9）
+//
+// 职责：System 子系统对外唯一门面，供 Agent 侧 systemMonitor 调用。
+// 设计要点：mgr 关联构造注入；getInfo / apply 均为转发。
 
-// System 子系统对外唯一入口（类可见性 public）。
-// 见《软件详细设计文档》5.4、6.2。
+#ifndef SCHED_SYSTEM_SYSTEMINTERFACE_H
+#define SCHED_SYSTEM_SYSTEMINTERFACE_H
 
-#include <memory>
+#include "common/include/SchedTypes.h"
 
-#include "StateSnapshot.h"
-#include "Types.h"
-
-namespace syscore {
+namespace sched {
 
 class SystemManager;
 
 class SystemInterface {
 public:
-    SystemInterface();
+    explicit SystemInterface(SystemManager* mgr);
     ~SystemInterface();
 
-    SystemInterface(const SystemInterface&) = delete;
-    SystemInterface& operator=(const SystemInterface&) = delete;
+    // 转交 mgr->getInfo()，汇聚设备状态返回。
+    SystemInfo getInfo();
 
-    // 采集系统状态量（UC2）
-    bool getInfo(common::SystemFeature& out);
-
-    // 下发单设备动作（UC3）
-    common::ResultInfo applyAction(const common::DeviceAction& action);
-
-    // 共享内存状态快照指针（供监控线程写入）
-    common::StateSnapshot* snapshot();
+    // 转交 mgr->apply(action)，由其路由到具体设备。
+    bool apply(const DeviceAction& action);
 
 private:
-    std::unique_ptr<SystemManager> m_manager;   // pimpl：实现细节不外泄
+    SystemManager* mgr_ = nullptr;  // 关联，构造注入
 };
 
-}  // namespace syscore
+} // namespace sched
+
+#endif // SCHED_SYSTEM_SYSTEMINTERFACE_H

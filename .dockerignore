@@ -1,17 +1,11 @@
-# 构建产物
+.git
+.gitignore
 build/
-bin/
 *.o
 *.a
 *.so
-*.d
-
-# 版本控制与 IDE
-.git/
-.gitignore
+schedd
+*_test
 .vscode/
 .idea/
-
-# Python 缓存
-__pycache__/
-*.pyc
+software-design-documents/
