@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
-// DecisionMaker —— 推理器 · Agent 子系统 · private（详见详细设计 §7.7）
+// decisionMaker —— 推理器 · Agent 子系统 · private（详细设计 §3.8）
 //
-// 职责：特征编码 → DQN 推理（经 ONNXruntime）→ 动作解码。
+// 职责：按契约拼接「任务特征 + 系统特征」→ 归一化 → ONNX 推理 → 动作解码。
 // 设计要点：
-//   - modelPath 为配置注入属性，空串表示未就绪；
-//   - load 无参（路径取自 modelPath）；isReady 判断模型是否加载成功。
+//   - **不持 ONNXruntime 指针**：ONNXruntime 是全静态类的进程级资源（§1 / D-05），
+//     直接以类名调用其静态方法；
+//   - modelPath 只存**完整路径**，不存模型名（D-10）——本类只需知道「模型在哪里」；
+//   - 契约路径**不存属性**：它恒等于「当前模型路径换扩展名」，由 setModelPath 派生；
+//   - ready = 会话与契约**都已加载**才为真；构造不加载任何东西（D-11）。
 
 #ifndef SCHED_AGENT_DECISIONMAKER_H
 #define SCHED_AGENT_DECISIONMAKER_H
@@ -15,29 +18,30 @@
 
 namespace sched {
 
-class ONNXruntime;
-
-class DecisionMaker {
+class decisionMaker {
 public:
-    explicit DecisionMaker(ONNXruntime* runtime);
-    ~DecisionMaker();
+    // 构造注入模型完整路径（仅作**默认路径**预置）；空串表示未加载
+    explicit decisionMaker(const std::string& modelPath = "");
+    ~decisionMaker();
 
-    // 判断模型是否已成功加载。
+    // 就绪与否直接读 ready（模型会话与契约均已加载）
     bool isReady() const;
 
-    // 加载模型建会话（路径取自 modelPath_）。
-    bool load();
+    // 热切换模型：路径校验 → 文件级校验 → 先建新会话 → 派生并加载契约 →
+    // 两者都成功才替换并使 ready 转真；任一失败则路径 / 契约 / 就绪均不变。
+    bool setModelPath(const std::string& modelPath);
 
-    // 执行一次推理。前置：isReady() == true。
-    Decision decide(const SystemFeature& feature);
-
-    // 配置注入模型路径（装配期调用）。
-    void setModelPath(const std::string& path);
+    // 一次决策：按契约 input_fields 顺序拼接任务与系统特征 → 归一化 → 推理 → 解码。
+    // 返回 valid == false 的 Decision 表示推理失败（未选中任何处理器）。
+    Decision makeDecision(const TaskInfo& taskInfo, const SystemInfo& sysInfo);
 
 private:
-    ONNXruntime* runtime_ = nullptr;         // 依赖：推理引擎封装
-    std::string modelPath_;                  // ONNX 模型路径（配置注入）
-    bool ready_ = false;                     // 就绪标志
+    // 解析并校验契约（三道校验的第 3 道在此处比对新会话输入维度）
+    bool loadContract(const std::string& contractPath, int modelInputDim);
+
+    std::string modelPath_;   // 当前生效模型的完整路径；空串 = 未加载
+    Contract contract_;       // 已解析契约（inputDim / inputFields / outputDim / actions）
+    bool ready_ = false;      // 就绪标志：会话与契约均已加载
 };
 
 } // namespace sched

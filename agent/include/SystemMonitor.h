@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
-// SystemMonitor —— 监控门面 · Agent 子系统 · private（详见详细设计 §7.6）
+// systemMonitor —— 监控门面 · Agent 子系统 · private（详细设计 §3.7）
 //
-// 职责：Agent 侧系统状态门面。将 System 子系统（systemInterface）采集的
-//       设备状态转换为用于决策的特征向量。
+// 职责：Agent 侧通往 System 的**唯一出口**（D-12）——读系统状态、下发频率设置。
 // 设计要点：
-//   - sys 关联构造注入；
-//   - getFeature 内部先调 collect，再据 lastInfo 返回；失败回兜底值；
-//   - lastInfo 保存最近一次有效 SystemInfo，作 stale 兜底。
+//   - 只有 sys 一个关联属性（构造注入），**不缓存、不采样**：刷新由后台
+//     systemManager::refreshSystemInfo 承担，本类纯转发（读的是 System 侧缓存）；
+//   - setFreq 只作通道，**不加工结果**（ok / message / adjusted / reason 原样透传）。
 
 #ifndef SCHED_AGENT_SYSTEMMONITOR_H
 #define SCHED_AGENT_SYSTEMMONITOR_H
@@ -17,21 +16,20 @@ namespace sched {
 
 class systemInterface;
 
-class SystemMonitor {
+class systemMonitor {
 public:
-    // 构造注入 System 子系统门面
-    explicit SystemMonitor(systemInterface* sys);
-    ~SystemMonitor();
+    // 构造注入 System 门面引用；**不拥有 sys**，只做赋值、不做 I/O
+    explicit systemMonitor(systemInterface* sys);
+    ~systemMonitor();
 
-    // 对外取特征：内部先 collect，再据 lastInfo 返回；失败回兜底值。
-    SystemFeature getFeature();
+    // 读 System 侧的 SystemInfo 缓存副本（纯转发）。
+    SystemInfo getSystemInfo();
+
+    // 下发一次频率设置（纯转发）；返回 systemInterface 的 ResultInfo。
+    ResultInfo setFreq(const Freq& freq);
 
 private:
-    // 采集一次并更新 lastInfo。成功返回 true；失败保持不变。
-    bool collect();
-
-    systemInterface* sys_ = nullptr;  // 关联，构造注入
-    SystemInfo lastInfo_;             // 最近一次有效快照（stale 兜底）
+    systemInterface* sys_ = nullptr;   // 关联，构造注入（生存期由装配层保证）
 };
 
 } // namespace sched

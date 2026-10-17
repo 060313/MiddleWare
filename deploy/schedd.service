@@ -15,6 +15,12 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=2
 
+# 停机等待上限（详见设计 §6.3 第三条约束）：
+# SIGTERM 后服务线程可能正卡在同步 Run() 里，epoll_wait 不会立即返回，
+# 等待上界 = 推理硬超时 + 一次 setFreq I/O。此值必须**大于该上界**，
+# 否则会被 SIGKILL 打断，留下未 unlink 的 .sock，下次 bind 直接失败。
+TimeoutStopSec=30
+
 # 设备与运行时目录
 RuntimeDirectory=schedd
 RuntimeDirectoryMode=0755

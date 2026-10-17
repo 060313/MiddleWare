@@ -1,8 +1,8 @@
 # CPU+XPU 异构调度中间件
 
 面向 openEuler / aarch64（RK3588）的 CPU+XPU 异构调度中间件，以 DQN 作调度决策。
-本仓库为**原型框架**：完整落地《详细设计文档（新）》的 **A 方案 12 个设计类**，
-接口按设计文档方法表逐条声明，业务实现待逐批填充。
+本仓库为**原型框架**：按《详细设计》落地 **13 个设计类**，类名、属性、方法签名与
+设计文档 §3 逐条对齐；标注 `TODO(实现层)` 处为待填充的 I/O 与算法实现。
 
 ## 构建
 
@@ -41,15 +41,15 @@ docker run --rm -it \
 ## 目录结构
 
 ```
-common/     UDSService / FileService / ONNXruntime      （公共基础设施，3 类）
+common/     UDSService / FileService / ONNXruntime / Timer  （公共基础设施，4 类，全静态）
 agent/      schedManager / systemMonitor /
-            decisionMaker / decisionExecutor            （Agent 子系统，4 类）
+            decisionMaker / decisionExecutor              （Agent 子系统，4 类）
 system/     systemInterface / systemManager /
-            CPU / NPU                                   （System 子系统，4 类）
-service/    serviceInterface                            （Service 子系统，1 类）
-app/        ScheddApp 装配 + schedd 入口                （进程装配层）
-cli/        （空 —— 界面设计，待建）
-data/       （空 —— 数据设计，待建）
+            CPU / NPU                                       （System 子系统，4 类）
+service/    serviceInterface                                （Service 子系统，1 类）
+app/        ScheddApp 装配 + schedd 入口                    （进程装配层，非设计类）
+data/       ConfigFile / ModelFile / ContractFile           （数据封装，非设计类）
+cli/        （空 —— schedctl 界面，待建）
 test/       单元测试
 deploy/     schedd.conf / schedd.service
 ```
@@ -57,24 +57,51 @@ deploy/     schedd.conf / schedd.service
 ## 装配关系
 
 ```
-ServiceInterface ──关联──► schedManager
-                              ├─关联──► systemMonitor ──关联──► SystemInterface
-                              ├─关联──► decisionMaker ──依赖──► ONNXruntime
-                              └─关联──► decisionExecutor
+serviceInterface ──关联──► schedManager
+                             ├─关联──► systemMonitor ──关联──► systemInterface
+                             ├─关联──► decisionMaker ──依赖──► ONNXruntime（静态）
+                             └─关联──► decisionExecutor ──关联──► systemMonitor
 
-SystemInterface ──关联──► SystemManager ──组合──► CPU / NPU
-CPU / NPU ──依赖──► FileService
-ServiceInterface ──依赖──► UDSService
+systemInterface ──关联──► systemManager ──组合──► CPU / NPU
+CPU / NPU ──依赖──► FileService（静态）
+serviceInterface ──依赖──► UDSService（静态）
 ```
+
+三条贯穿全局的语义约束：
+
+| 约束 | 含义 |
+|---|---|
+| 一次决策只动一台设备 | `Decision` 承载唯一 `Freq`，CPU / NPU 二选一，`ActionInfo` 恒含「一条动作 + 一个结果」（D-13 / D-14） |
+| Agent 通往 System 的出口唯一 | 读状态与下发频率都经 `systemMonitor`，不直连设备类（D-12） |
+| 失败靠枚举而非文本 | `ResultInfo.reason`（`Reason`）→ 协议码由 `serviceInterface::handleFrame` 单点映射（D-33） |
+
+## 运行模型
+
+单进程守护（systemd `Type=simple`），**两线程**（D-35）：
+
+| 线程 | 入口 | 职责 |
+|---|---|---|
+| 服务线程 | `serviceInterface::serve()` → `UDSService::serve()` | epoll 事件循环；推理在本线程内同步完成 |
+| 监控线程 | `Timer::poll()` 循环 | 到期调 `systemManager::refreshSystemInfo()` 刷新缓存 |
+
+跨线程共享只有 `systemManager::systemInfo` 一处，两侧持 `sysMutex`。
+启动装配 14 步、停机 6 步见设计 §6.1 / §6.3。
 
 ## 设计文档
 
-- 《详细设计文档（新）》—— A 方案 12 类 + 数据设计
-- 《软件体系结构设计文档》
-- 《用户界面设计文档》
-
-文档位于正本 `Reference/document/02_软件设计/`，本目录下 `software-design-documents/` 为副本。
+- 正本：`software-design-documents/design.md`（6 章：类清单 / 用例 / 类设计 / 数据 / 裁决汇总 / 运行模型）
+- 副本：`Reference/document/02_软件设计/详细设计文档（新）.md`（10 章，整体滞后于正本）
+- 《软件体系结构设计文档》《用户界面设计文档》位于 `Reference/document/`
 
 ## 状态
 
-框架搭建阶段：接口已按设计文档声明，标注 `TODO(实现层)` 处为待填充实现。
+框架完成、装配层可运行：`schedd --config <路径>` 会读配置 → 装配 13 类 → 首次加载模型 →
+建监听 → 起两线程 → 等 `SIGTERM`。待填充的实现集中在四处：
+
+| 模块 | 待补内容 |
+|---|---|
+| `UDSService` | epoll 事件循环、切帧、半帧超时、帧头验/剥/加 |
+| `ONNXruntime` | 会话建立、`Run` 调用、超时取消（`SetOptions` + 看护线程）、输入维读取 |
+| `CPU` / `NPU` | sysfs 节点读写、`/proc/stat` 差分、`governor` 切换 |
+| `ContractFile` | 契约 JSON 解析 |
+| `serviceInterface::handleFrame` | 四键外壳与 JSON 编解码、错误码映射 |

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MIT
 # common 模块构建片段（由顶层 Makefile include）
 #
-# 承载设计类：UDSService / FileService / ONNXruntime（详见详细设计 §7.2~§7.4）
+# 承载设计类：UDSService / FileService / ONNXruntime / Timer（详见详细设计 §3.2~§3.5）
+# 四者均为**全静态类**：不实例化、无构造与析构
 
 COMMON_SRCS := \
     $(wildcard $(ROOT)/common/src/*.cpp)

@@ -1,24 +1,30 @@
 // SPDX-License-Identifier: MIT
-// ModelFile 实现（骨架 —— 待填充）
+// ModelFile 实现（详细设计 §4.5.3）
 //
-// TODO(实现层)：
-//   - loadModel()：校验路径非空 → 打开模型文件读取（本类不做推理）
-//   - modelValidate()：路径非空校验 + 文件可读性探测
+// 只做文件级校验；模型文件的「读取」不在此处——那属于建会话，归 ONNXruntime。
 
 #include "data/include/ModelFile.h"
 
+#include <fstream>
+
 namespace sched {
 
-bool ModelFile::loadModel(const std::string& modelPath) {
-    // TODO(实现层)
-    path_ = modelPath;
-    return false;
-}
-
 bool ModelFile::modelValidate(const std::string& modelPath) {
-    // TODO(实现层)
-    (void)modelPath;
-    return false;
+    // S1. 路径非空
+    if (modelPath.empty()) {
+        return false;
+    }
+
+    // S2. 文件可读（存在 + 可打开）——失败即返回
+    std::ifstream ifs(modelPath, std::ios::in | std::ios::binary | std::ios::ate);
+    if (!ifs.is_open()) {
+        return false;
+    }
+
+    // S3. 文件非空校验：长度 0 → false。
+    //     此处是**普通文件**，用文件长度安全；sysfs / proc 才禁止用 st_size（那类读取走 FileService）
+    const std::streamoff size = ifs.tellg();
+    return size > 0;
 }
 
 } // namespace sched

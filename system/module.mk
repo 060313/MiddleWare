@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # system 模块构建片段（由顶层 Makefile include）
 #
-# 承载设计类：systemInterface / systemManager / CPU / NPU（详见详细设计 §7.9~§7.12）
+# 承载设计类：systemInterface / systemManager / CPU / NPU（详见详细设计 §3.10~§3.13）
 
 SYSTEM_SRCS := \
     $(wildcard $(ROOT)/system/src/*.cpp)

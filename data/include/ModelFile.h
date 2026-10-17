@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
-// ModelFile —— 模型文件封装（详见详细设计 §4.5.3）
+// ModelFile —— 模型文件封装（详细设计 §4.5.3 / D-26）
 //
-// 属 common 基础设施层，不计入 12 个设计类。
-// 职责：模型文件的读取与校验。
-// 边界：只负责文本/路径层面的处理，推理由 ONNXruntime 承担。
+// 属 common 基础设施层，**不计入 §1 的 13 个设计类**。
+// 职责：**只做文件级校验**（路径非空、文件可读、文件非空）。
+// 边界：
+//   - **不提供「读取」方法**：模型文件的读取即建立推理会话，已由 ONNXruntime::load 承担，
+//     本类再读一遍纯属冗余；
+//   - 不做魔数与 ONNX 头部解析——头部解析成本高，且 ONNXruntime::load 的失败信息更准确；
+//   - 三段分工：ModelFile 管文件级、ONNXruntime 管会话级、decisionMaker 管配对级（§4.4 第 3 道）。
 
 #ifndef SCHED_DATA_MODELFILE_H
 #define SCHED_DATA_MODELFILE_H
@@ -16,14 +20,8 @@ class ModelFile {
 public:
     ModelFile() = default;
 
-    // 读入模型文件（收完整路径）。
-    bool loadModel(const std::string& modelPath);
-
-    // 校验模型：路径非空、文件可读。
+    // 校验模型：路径非空 → 文件可读 → 文件非空；任一不满足返回 false
     bool modelValidate(const std::string& modelPath);
-
-private:
-    std::string path_;  // 最近一次读取的模型路径
 };
 
 } // namespace sched
