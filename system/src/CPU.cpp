@@ -1,143 +1,161 @@
 // SPDX-License-Identifier: MIT
-// CPU 实现（详细设计 §3.12 / D-17 / D-18 / D-32）
+// CPU 实现（详细设计 §3.12）
 //
-// 本文件把控制流写全，**节点 I/O 部分留 TODO**（readFreqTable / writeFreq / /proc/stat 读取），
-// 纯计算部分（差分、档位夹取、去重升序、收窄）已按设计实现。
+// 设计依据（正文不再重复引用）：
+//   - D-17：节点用 cpufreq 语义（scaling_*），均在 policy 目录下，**无 userspace/ 子目录**；
+//   - D-18：这些节点**原生即 kHz** —— 读入直解析、写出直写，**不做 ×1000**；
+//   - D-32：setFreq 的 ok 只取写入结果，回读仅刷新 curFreq_，**不与目标值比对**。
 //
-// 节点命名（D-17）：cpufreq 语义，`scaling_available_frequencies` /
-// `scaling_cur_freq` / `scaling_setspeed` / `scaling_governor`，均在 policy 目录下。
-// 单位（D-18）：这些节点**原生即 kHz**，读入直解析、写出直写，**不做 ×1000**。
+// 并发：本对象跨线程共享（监控线程 getCPUInfo / 服务线程 setFreq），
+//       共享状态一律在 cpuLock_ 下读写，**设备 I/O 一律在锁外**。
 
 #include "system/include/CPU.h"
 
 #include <algorithm>
-#include <cstdlib>
+#include <sstream>
 #include <string>
 
 #include "common/include/FileService.h"
+#include "common/include/FreqUtil.h"
 
 namespace sched {
 
-namespace {
+//操作系统内的原始数据中不包含利用率，需要重新计算
+//用于从操作系统文件中按格式提取并处理CPU参数
+bool parseProcStat(const std::string& content, uint64_t& total, uint64_t& idle) {
 
-// 在**已升序**的档位表中找最近合法档位（夹取用）
-int nearestFreqKHz(const std::vector<int>& table, int targetKHz) {
-    int best = table.front();
-    long long bestDiff = std::llabs(static_cast<long long>(targetKHz) - best);
-    for (const int freq : table) {
-        const long long diff = std::llabs(static_cast<long long>(targetKHz) - freq);
-        if (diff < bestDiff) {
-            best = freq;
-            bestDiff = diff;
-        }
+    //提取文件第一行
+    const std::size_t eol = content.find('\n');
+    const std::string line = content.substr(0, eol);
+    if (line.size() < 4 || line.compare(0, 4, "cpu ") != 0) {
+        return false;
     }
-    return best;
+
+    //格式转换
+    std::istringstream iss(line);
+    std::string label;
+    iss >> label;
+    uint64_t fields[10] = {0};
+    int n = 0;
+    while (n < 10 && (iss >> fields[n])) {
+        ++n;
+    }
+    if (n < 4) {
+        return false;
+    }
+
+    //数据计算
+    total = 0;
+    for (int i = 0; i < n && i < 8; ++i) {
+        total += fields[i];
+    }
+    idle = fields[3] + ((n > 4) ? fields[4] : 0);
+    return true;
 }
 
-} // namespace
-
-CPU::CPU(const std::string& devPath, const std::string& procStatPath, int freqMin, int freqMax)
-    : freqMin_(freqMin), freqMax_(freqMax) {
-    // S1. 路径为空则退化为宏定义默认（测试可注入伪 sysfs）
-    devPath_ = devPath.empty() ? std::string(CPU_FREQ_PATH) : devPath;
-    procStatPath_ = procStatPath.empty() ? std::string(PROC_STAT_PATH) : procStatPath;
-
-    // S2. freqMin / freqMax 均为 0 表示不限；二者矛盾时按下限优先（readFreqTable S3 兜底）
-    // S3. freqTable 空、curFreq = 0（成员初值已给出）
-    // S4. 差分基准置零（首帧利用率为占位值）
-    // S5. **不在构造期读任何文件**，故构造不可失败
-}
+//初始化
+CPU::CPU(const std::string& freqPath, const std::string& statPath, int freqMin, int freqMax)
+    : freqPath_(freqPath),statPath_(statPath),freqMin_(freqMin), freqMax_(freqMax) {}
 
 CPU::~CPU() = default;
-// 平凡析构：不持常开文件句柄（每次读写即时开闭）
+
+// 处理器只接受档位表内频率
+// 读档位表：解析 → 去重升序 → 收窄 → 持锁替换 freqTable_（唯一写入点）
+bool CPU::readFreqTable() {
+    std::vector<int> table = parseFreqTable(FileService::read(freqPath_ + "/scaling_available_frequencies"), 1);
+    if (table.empty()) return false;
+
+    std::vector<int> narrowed;   // 收窄：0 表示该侧不限
+    for (const int f : table) {
+        if ((freqMin_ > 0 && f < freqMin_) || (freqMax_ > 0 && f > freqMax_)) {
+            continue;
+        }
+        narrowed.push_back(f);
+    }
+
+    // 收窄后为空 → 退化为未收窄的整表（§3.12 S3.1），不计为配置错误
+    const bool empty = narrowed.empty();
+    withCPULock([&](){freqTable_ = empty ? std::move(table) : std::move(narrowed);});
+    return !empty;
+}
+
+bool CPU::writeFreq(int freqKHz) {
+    std::vector<int> table;
+    withCPULock([&](){table=freqTable_;});
+    if (!std::binary_search(table.begin(), table.end(), freqKHz)) return false;
+    return FileService::write(freqPath_ + "/scaling_setspeed", std::to_string(freqKHz));
+}
+
 
 CPUInfo CPU::getCPUInfo() {
-    // S1. 确保频率表已读；失败不阻断（freqTable 保持空，setFreq 会兜底报 3002）
-    if (freqTable_.empty()) {
-        readFreqTable();
+    bool needRead = withCPULock([&](){return freqTable_.empty();});
+    if (needRead) readFreqTable();
+
+    uint64_t total = 0; uint64_t idle = 0;
+    const bool statOk = parseProcStat(FileService::read(statPath_), total, idle);
+
+    //计算利用率
+    double util = withCPULock([&](){
+        double res=0.0;
+        if (statOk) {
+            if (hasPrevSample_ && total >= prevTotal_ && idle >= prevIdle_) {
+                const uint64_t dTotal = total - prevTotal_;
+                const uint64_t dIdle = idle - prevIdle_;
+                res = (dTotal > 0) ? (1.0 - static_cast<double>(dIdle) / dTotal) : 0.0;
+            }
+            prevTotal_ = total;
+            prevIdle_ = idle;
+            hasPrevSample_ = true;
+        }
+        return res;
+    });
+
+    // 读当前频率（锁外 I/O，原生 kHz 不折算）；读失败保留旧值
+    long long readKHz = 0;
+    if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
+        withCPULock([&](){curFreq_ = static_cast<int>(readKHz);});
     }
 
-    // S2. TODO(实现层)：读 procStatPath_ 首行（cpu 汇总行），解析累计 total / idle jiffies
-    uint64_t total = prevTotal_;   // TODO: 换成实读值
-    uint64_t idle = prevIdle_;     // TODO: 换成实读值
 
-    // S3. 利用率差分
-    double util = 0.0;
-    if (hasPrevSample_) {
-        const uint64_t dTotal = total - prevTotal_;
-        const uint64_t dIdle = idle - prevIdle_;
-        // S3.2 除零保护
-        util = (dTotal > 0)
-                   ? (1.0 - static_cast<double>(dIdle) / static_cast<double>(dTotal))
-                   : 0.0;
-    }
-    // S3.3 首帧无基准 → util 保持 0（占位值）
-
-    // S4. 更新差分基准（属内部采样状态，不改对外可见状态）
-    prevTotal_ = total;
-    prevIdle_ = idle;
-    hasPrevSample_ = true;
-
-    // S5. TODO(实现层)：读 devPath_ + "/scaling_cur_freq" 更新 curFreq_（原生 kHz，不折算）
-
-    // S6. 组装返回
     CPUInfo info;
     info.util = util;
     info.curFreqKHz = curFreq_;
-    info.freqTable = freqTable_;
     return info;
 }
 
 ResultInfo CPU::setFreq(const Freq& freq) {
-    // S1. 可承载性判定：档位表为空 → 3002（不可承载不等于越界，不做夹取）
-    if (freqTable_.empty()) {
-        return ResultInfo{false, "freq table unavailable", false, Reason::freqUnavailable};
-    }
+    bool needRead = withCPULock([&](){return freqTable_.empty();});
+    if (needRead) readFreqTable();
 
-    // S1.2 不在表内 → 夹取到最近合法档位并置 adjusted（越界不判失败）
+    std::vector<int> table = withCPULock([&](){return freqTable_;});
+    if (table.empty())
+        return ResultInfo{false, "freq table unavailable", false, Reason::freqUnavailable};
+
     int targetKHz = freq.freqKHz;
     bool adjusted = false;
-    if (!std::binary_search(freqTable_.begin(), freqTable_.end(), targetKHz)) {
-        targetKHz = nearestFreqKHz(freqTable_, targetKHz);
+    if (!std::binary_search(table.begin(), table.end(), targetKHz)) {
+        targetKHz = nearestFreqKHz(table, targetKHz);
         adjusted = true;
     }
 
-    // S2. TODO(实现层)：读 devPath_ + "/scaling_governor"，非 userspace 则写入 userspace；
-    //     切换失败 → 返回 writeFailed("governor switch failed") 且**不写频率**
+    // 非 userspace 下内核拒写 scaling_setspeed，硬写只会回读到旧值 —— 先切策略
+    if (FileService::read(freqPath_ + "/scaling_governor").find("userspace") != 0) {
+        if (!FileService::write(freqPath_ + "/scaling_governor", "userspace")) {
+            return ResultInfo{false, "governor switch failed", adjusted, Reason::writeFailed};
+        }
+    }
 
-    // S3. 写频率节点
     if (!writeFreq(targetKHz)) {
-        // 失败时 curFreq_ 保持原值
         return ResultInfo{false, "write freq failed", adjusted, Reason::writeFailed};
     }
 
-    // S4. TODO(实现层)：回读 scaling_cur_freq 刷新 curFreq_（读失败保留写入前值）；
-    //     **不与目标值比对、不作成败判据**（D-32）
-    curFreq_ = targetKHz;
-
-    return ResultInfo{true, std::string(), adjusted, Reason::none};
-}
-
-bool CPU::readFreqTable() {
-    // S1. TODO(实现层)：经 FileService::read 读 devPath_ + "/scaling_available_frequencies"
-    //     读失败或内容为空 → 返回 false
-    // S2. 解析（空白 / 逗号分隔）→ **去重并按升序排列**（夹取依赖有序）
-    // S3. 档位收窄：剔出 < freqMin_ 与 > freqMax_ 的项（值为 0 表示该侧不限）
-    // S3.1 收窄后为空 → **保留原表**并返回 false（不计为配置错误）
-    // S4. 收窄结果非空 → 写入 freqTable_，返回 true
-    return false;
-}
-
-bool CPU::writeFreq(int freqKHz) {
-    // S1. 前置：目标频率必须在表内（不允许设表外频率）
-    if (!std::binary_search(freqTable_.begin(), freqTable_.end(), freqKHz)) {
-        return false;
+    // 回读刷新真实值（D-32：不与目标值比对、不作成败判据）；读失败保留写入前的值
+    long long readKHz = 0;
+    if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
+        withCPULock([&](){curFreq_ = static_cast<int>(readKHz);});
     }
 
-    // S2. TODO(实现层)：经 FileService::write 写 devPath_ + "/scaling_setspeed"
-    //     **原生 kHz，直接写十进制文本，不做 ×1000**（D-18）
-    // S3. 返回写入结果
-    return false;
+    return ResultInfo{true, std::string(), adjusted, Reason::none};
 }
 
 } // namespace sched
