@@ -5,7 +5,7 @@
 // 设计依据：
 //   - D-17：节点用 cpufreq 语义（scaling_*），均在 policy 目录下；
 //   - D-18：节点**原生即 kHz** —— 读入直解析、写出直写，**不做折算**；
-//   - D-32：setFreq 的 ok 只取写入结果，回读仅刷新 curFreq，**不与目标值比对**；
+//   - D-32：setFreq 的 ok 只取写入结果，回读仅刷新 cpuInfo_.curFreqKHz，**不与目标值比对**；
 //   - 构造只赋值、不读文件，故构造不可失败；freqTable 与档位收窄**懒加载**——
 //     首次 getCPUInfo 或 setFreq 谁先到谁装表（服务线程可能先于监控线程到达调频请求）；
 //   - 跨线程共享：监控线程 getCPUInfo / 服务线程 setFreq，共享状态由 cpuLock_ 保护，
@@ -60,13 +60,12 @@ private:
     int freqMax_ = 0;               // 档位收窄上限（kHz；0 表不限）
 
     // 跨线程共享状态，一律在 cpuLock_ 下读写
+    CPUInfo cpuInfo_;
     std::vector<int> freqTable_;  // 可用频率表（kHz，已收窄）
-    int curFreq_ = 0;             // 当前频率（kHz）
     uint64_t prevTotal_ = 0;      // 上次采样累计 jiffies（总）
     uint64_t prevIdle_ = 0;       // 上次采样累计 jiffies（空闲）
     bool hasPrevSample_ = false;  // 已有差分基准？首帧利用率为占位值
 
-    mutable std::mutex devMutex_;  // 【遗留】已由 cpuLock_ 取代，暂无使用者，待删
     mutable std::mutex cpuLock_;
 };
 

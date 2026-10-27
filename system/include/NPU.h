@@ -3,7 +3,7 @@
 //
 // 职责：读 / 写 devfreq 频率节点、读 load 节点得利用率。
 // 设计依据：
-//   - 与 CPU **方法集合同构**（D-19），但无 procfs：不持 procStatPath / 差分基准；
+//   - 与 CPU **方法集合同构**（D-19），但无 procfs：不持 statPath / 差分基准；
 //   - 利用率取 devfreq `load`（0~100 → [0,1]），**单帧即得**，无首帧占位问题；
 //   - D-21：devfreq 节点**原生单位 Hz** —— 读入 ÷1000、写出 ×1000，
 //     表 / 当前值 / 收窄上下限的比较与存储一律在 kHz 上进行；
@@ -32,7 +32,7 @@ public:
     NPUInfo getNPUInfo();
 
     // 确保频率表已读（懒加载）→ 可承载性判定（越界夹取）→ 确保 governor 为 userspace
-    // → 写节点 → 回读刷新 curFreq
+    // → 写节点 → 回读刷新 npuInfo_.curFreqKHz
     ResultInfo setFreq(const Freq& freq);
 
 private:
@@ -54,8 +54,8 @@ private:
     int freqMax_ = 0;             // 档位收窄上限（kHz；0 表不限）
 
     // 跨线程共享状态，一律在 npuLock_ 下读写
+    NPUInfo npuInfo_;
     std::vector<int> freqTable_;  // 可用频率表（kHz，已收窄）
-    int curFreq_ = 0;             // 当前频率（kHz）
 
     mutable std::mutex npuLock_;
 };

@@ -91,13 +91,11 @@ struct TaskInfo {
 struct CPUInfo {
     double util = 0.0;                     // 利用率 [0,1]（/proc/stat 两帧差分）
     int curFreqKHz = 0;                    // 当前频率（kHz）
-    std::vector<int> freqTable;            // 可用频率表（kHz，已按上下限收窄）
 };
 
 struct NPUInfo {
     double util = 0.0;                     // 利用率 [0,1]（devfreq load，单帧即得）
     int curFreqKHz = 0;                    // 当前频率（kHz）
-    std::vector<int> freqTable;            // 可用频率表（kHz，已按上下限收窄）
 };
 
 // ---------------------------------------------------------------------------
@@ -105,8 +103,6 @@ struct NPUInfo {
 // 由 systemManager::refreshSystemInfo 组装、askSystemInfo 纯读缓存。
 // ---------------------------------------------------------------------------
 struct SystemInfo {
-    CPUInfo cpuInfo;                       // CPU 设备状态
-    NPUInfo npuInfo;                       // NPU 设备状态
     double ucpu = 0.0;                     // 特征：CPU 利用率 [0,1]
     double unpu = 0.0;                     // 特征：NPU 利用率 [0,1]（单值，口径同 NPUInfo）
     int cpuFreqKHz = 0;                    // 特征：CPU 当前频率（kHz）

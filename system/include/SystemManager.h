@@ -7,7 +7,7 @@
 //     二者在头文件里只前置声明，故**析构体必须定义在 .cpp**；
 //   - refreshSystemInfo 是 systemInfo_ 的**唯一写入者**，不对外开 setter —— 这是
 //     D-16「陈旧度 ≤ 一个 intervalMs」的前提；
-//   - 跨线程共享**两处**：systemInfo_（sysMutex_）与 CPU / NPU 对象自身（各一把 devMutex_）；
+//   - 跨线程共享**两处**：systemInfo_（sysLock_）与 CPU / NPU 对象自身（各一把 devMutex_）；
 //   - **读设备在锁外、写缓存才持锁**；本类不持采样间隔（归 Timer，§3.5）。
 
 #ifndef SCHED_SYSTEM_SYSTEMMANAGER_H
@@ -17,6 +17,7 @@
 #include <mutex>
 #include <string>
 
+#include "common/include/SchedDefs.h"
 #include "common/include/SchedTypes.h"
 
 namespace sched {
@@ -27,9 +28,9 @@ class NPU;
 class systemManager {
 public:
     // 三个路径为空则退化为宏默认；四个收窄值非负，0 表不限。构造内创建 CPU / NPU，**不读设备节点**
-    systemManager(const std::string& cpuFreqPath,
-                  const std::string& npuFreqPath,
-                  const std::string& procStatPath,
+    systemManager(const std::string& cpuFreqPath=std::string(CPU_FREQ_PATH),
+                  const std::string& npuPath=std::string(NPU_PATH),
+                  const std::string& cpuStatPath=std::string(CPU_STAT_PATH),
                   int cpuFreqMin = 0,
                   int cpuFreqMax = 0,
                   int npuFreqMin = 0,
@@ -46,12 +47,19 @@ public:
     ResultInfo setFreq(const Freq& freq);
 
 private:
+    //操作锁
+    template<typename Function>
+    auto withSysLock(Function&& fun) {
+        const std::lock_guard<std::mutex> lock(sysLock_);
+        return fun();
+    }
     // 组合：unique_ptr 持有，析构体在 .cpp（见 SystemManager.cpp）
     std::unique_ptr<CPU> cpu_;
     std::unique_ptr<NPU> npu_;
 
     SystemInfo systemInfo_;    // 最近一次刷新的缓存（跨线程读写）
-    std::mutex sysMutex_;      // 只保护 systemInfo_，不保护设备 I/O
+    std::mutex sysLock_;      // 只保护 systemInfo_，不保护设备 I/O
+
 };
 
 } // namespace sched

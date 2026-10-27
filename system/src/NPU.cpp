@@ -33,11 +33,12 @@ NPUInfo NPU::getNPUInfo() {
     // 读当前频率（锁外 I/O，原生 Hz → ÷1000）；读失败保留旧值
     long long readHz = 0;
     if (parseInt(FileService::read(npuPath_ + "/cur_freq"), readHz))
-        withNPULock([&](){curFreq_ = static_cast<int>(readHz / 1000);});
+        withNPULock([&](){npuInfo_.curFreqKHz = static_cast<int>(readHz / 1000);});
 
     // load 节点由驱动可选导出，读失败或不可解析 → util 保持 0（不中断采集）
     long long load = 0;
     double util = 0.0;
+    bool utilOK = false;
     if (parseInt(FileService::read(npuPath_ + "/load"), load)){
             util = static_cast<double>(load) / 100.0;
             if (util < 0.0) {
@@ -46,12 +47,10 @@ NPUInfo NPU::getNPUInfo() {
             if (util > 1.0) {
                 util = 1.0;
             }
+            utilOK = true;
     }
-
-    NPUInfo info;
-    info.util = util;
-    info.curFreqKHz = curFreq_;
-    return info;
+    withNPULock([&](){if(utilOK) npuInfo_.util=util;});
+    return withNPULock([&](){return npuInfo_;});
 }
 
 ResultInfo NPU::setFreq(const Freq& freq) {
@@ -85,7 +84,7 @@ ResultInfo NPU::setFreq(const Freq& freq) {
     // 回读刷新真实值（D-32：不与目标值比对、不作成败判据）；读失败保留写入前的值
     long long readHz = 0;
     if (parseInt(FileService::read(npuPath_ + "/cur_freq"), readHz))
-        withNPULock([&](){curFreq_ = static_cast<int>(readHz / 1000);});
+        withNPULock([&](){npuInfo_.curFreqKHz = static_cast<int>(readHz / 1000);});
 
     return ResultInfo{true, std::string(), adjusted, Reason::none};
 }

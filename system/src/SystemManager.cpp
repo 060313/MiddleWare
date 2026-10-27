@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // systemManager 实现（详细设计 §3.11）
 //
-// 锁规矩：**读设备在锁外，写缓存才持 sysMutex_**（I/O 可能阻塞数百微秒，持锁会让服务线程排队）。
+// 锁规矩：**读设备在锁外，写缓存才持 sysLock_**（I/O 可能阻塞数百微秒，持锁会让服务线程排队）。
 // 组合：cpu_ / npu_ 由 unique_ptr 持有；析构体必须留在 .cpp —— CPU / NPU 在头文件里只前置声明，
 //       若隐式生成就会对不完整类型调 delete。
 
@@ -17,18 +17,15 @@
 namespace sched {
 
 systemManager::systemManager(const std::string& cpuFreqPath,
-                             const std::string& npuFreqPath,
-                             const std::string& procStatPath,
+                             const std::string& npuPath,
+                             const std::string& cpuStatPath,
                              int cpuFreqMin,
                              int cpuFreqMax,
                              int npuFreqMin,
                              int npuFreqMax) {
-    const std::string cpuPath = cpuFreqPath.empty() ? std::string(CPU_FREQ_PATH) : cpuFreqPath;
-    const std::string npuPath = npuFreqPath.empty() ? std::string(NPU_PATH) : npuFreqPath;
-    const std::string procPath = procStatPath.empty() ? std::string(CPU_STAT_PATH) : procStatPath;
 
     // make_unique 而非裸 new：第二步抛异常时，已建好的那个由 unique_ptr 成员自行析构
-    cpu_ = std::make_unique<CPU>(cpuPath, procPath, cpuFreqMin, cpuFreqMax);
+    cpu_ = std::make_unique<CPU>(cpuFreqPath, cpuStatPath, cpuFreqMin, cpuFreqMax);
     npu_ = std::make_unique<NPU>(npuPath, npuFreqMin, npuFreqMax);
 
     systemInfo_ = SystemInfo{};   // 零值快照，等后台首次 refreshSystemInfo
@@ -37,8 +34,7 @@ systemManager::systemManager(const std::string& cpuFreqPath,
 systemManager::~systemManager() = default;
 
 SystemInfo systemManager::askSystemInfo() {
-    const std::lock_guard<std::mutex> lock(sysMutex_);
-    return systemInfo_;   // 返回副本：锁释放后仍安全
+    return withSysLock([&](){return systemInfo_;});   // 返回副本：锁释放后仍安全
 }
 
 bool systemManager::refreshSystemInfo() {
@@ -50,16 +46,12 @@ bool systemManager::refreshSystemInfo() {
     const NPUInfo npuInfo = npu_->getNPUInfo();
     const CPUInfo cpuInfo = cpu_->getCPUInfo();
 
-    SystemInfo info;   // 只取四个特征分量，不内嵌设备本体（D-15 附）
-    info.ucpu = cpuInfo.util;
-    info.unpu = npuInfo.util;
-    info.cpuFreqKHz = cpuInfo.curFreqKHz;
-    info.npuFreqKHz = npuInfo.curFreqKHz;
-
-    {
-        const std::lock_guard<std::mutex> lock(sysMutex_);   // systemInfo_ 的唯一写入点
-        systemInfo_ = info;
-    }
+    withSysLock([&](){
+        systemInfo_.ucpu = cpuInfo.util;
+        systemInfo_.unpu = npuInfo.util;
+        systemInfo_.cpuFreqKHz = cpuInfo.curFreqKHz;
+        systemInfo_.npuFreqKHz = npuInfo.curFreqKHz;
+    });
     return true;
 }
 

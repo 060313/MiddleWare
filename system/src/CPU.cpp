@@ -4,7 +4,7 @@
 // 设计依据（正文不再重复引用）：
 //   - D-17：节点用 cpufreq 语义（scaling_*），均在 policy 目录下，**无 userspace/ 子目录**；
 //   - D-18：这些节点**原生即 kHz** —— 读入直解析、写出直写，**不做 ×1000**；
-//   - D-32：setFreq 的 ok 只取写入结果，回读仅刷新 curFreq_，**不与目标值比对**。
+//   - D-32：setFreq 的 ok 只取写入结果，回读仅刷新 cpuInfo_.curFreqKHz，**不与目标值比对**。
 //
 // 并发：本对象跨线程共享（监控线程 getCPUInfo / 服务线程 setFreq），
 //       共享状态一律在 cpuLock_ 下读写，**设备 I/O 一律在锁外**。
@@ -95,32 +95,32 @@ CPUInfo CPU::getCPUInfo() {
     const bool statOk = parseProcStat(FileService::read(statPath_), total, idle);
 
     //计算利用率
-    double util = withCPULock([&](){
-        double res=0.0;
-        if (statOk) {
-            if (hasPrevSample_ && total >= prevTotal_ && idle >= prevIdle_) {
-                const uint64_t dTotal = total - prevTotal_;
-                const uint64_t dIdle = idle - prevIdle_;
-                res = (dTotal > 0) ? (1.0 - static_cast<double>(dIdle) / dTotal) : 0.0;
-            }
+    double util = 0.0;
+    bool utilOK=false;
+    if (statOk) {
+        if (hasPrevSample_ && total >= prevTotal_ && idle >= prevIdle_) {
+            const uint64_t dTotal = total - prevTotal_;
+            const uint64_t dIdle = idle - prevIdle_;
+            util = (dTotal > 0) ? (1.0 - static_cast<double>(dIdle) / dTotal) : 0.0;
+            utilOK=true;
+        }
+        withCPULock([&](){
             prevTotal_ = total;
             prevIdle_ = idle;
             hasPrevSample_ = true;
-        }
-        return res;
-    });
+        });
+        
+    }    
+    withCPULock([&](){if(utilOK) cpuInfo_.util=util;});
 
     // 读当前频率（锁外 I/O，原生 kHz 不折算）；读失败保留旧值
     long long readKHz = 0;
     if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
-        withCPULock([&](){curFreq_ = static_cast<int>(readKHz);});
+        withCPULock([&](){cpuInfo_.curFreqKHz = static_cast<int>(readKHz);});
     }
 
+    return withCPULock([&](){return cpuInfo_;});
 
-    CPUInfo info;
-    info.util = util;
-    info.curFreqKHz = curFreq_;
-    return info;
 }
 
 ResultInfo CPU::setFreq(const Freq& freq) {
@@ -152,7 +152,7 @@ ResultInfo CPU::setFreq(const Freq& freq) {
     // 回读刷新真实值（D-32：不与目标值比对、不作成败判据）；读失败保留写入前的值
     long long readKHz = 0;
     if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
-        withCPULock([&](){curFreq_ = static_cast<int>(readKHz);});
+        withCPULock([&](){cpuInfo_.curFreqKHz = static_cast<int>(readKHz);});
     }
 
     return ResultInfo{true, std::string(), adjusted, Reason::none};
