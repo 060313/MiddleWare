@@ -105,7 +105,10 @@ docker-build:
 	docker build -t $(DOCKER_IMG) .
 
 docker-shell: docker-build
-	docker run --rm -it -v "$(ROOT)":/work -w /work $(DOCKER_IMG) bash
+	docker run --rm -it \
+		-v "$(CURDIR)":/work \
+		-v "$(CURDIR)/../../Reference":/reference \
+		$(DOCKER_IMG) bash
 
 status:
 	@echo "ROOT             = $(ROOT)"

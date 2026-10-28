@@ -16,10 +16,7 @@ RUN dnf install -y \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
-# ONNX Runtime SDK 根目录（硬依赖）。
-# 把解压后的 SDK 挂载到 /opt/onnxruntime 即可：
-#   -v /path/to/onnxruntime-linux-x64-<ver>:/opt/onnxruntime
-ENV ONNXRUNTIME_ROOT=/opt/onnxruntime
+ENV ONNXRUNTIME_ROOT=/reference/onnxruntime-linux-x64-1.20.1
 
 WORKDIR /work
 
