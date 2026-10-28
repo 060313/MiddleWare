@@ -88,15 +88,13 @@ struct TaskInfo {
 // 设备级状态（§3.11 / D-15：CPUInfo 与 NPUInfo 并列，无继承、互不包含）
 // 不设有效性字段：缓存中的值即视为有效，读失败按零值兜底。
 // ---------------------------------------------------------------------------
-struct CPUInfo {
+struct deviceInfo{
     double util = 0.0;                     // 利用率 [0,1]（/proc/stat 两帧差分）
     int curFreqKHz = 0;                    // 当前频率（kHz）
 };
 
-struct NPUInfo {
-    double util = 0.0;                     // 利用率 [0,1]（devfreq load，单帧即得）
-    int curFreqKHz = 0;                    // 当前频率（kHz）
-};
+struct CPUInfo :public deviceInfo{};
+struct NPUInfo :public deviceInfo{};
 
 // ---------------------------------------------------------------------------
 // 系统级状态（D-15）：**具体结构体（值语义）**，聚合两份设备状态 + 四个特征分量
