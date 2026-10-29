@@ -5,9 +5,10 @@
 
 #include "agent/include/DecisionMaker.h"
 
-#include <cstddef>
 #include <utility>
+#include <vector>
 
+#include "agent/include/DecisionMakerCodec.h"
 #include "common/include/ONNXruntime.h"
 #include "data/include/ContractFile.h"
 #include "data/include/ModelFile.h"
@@ -122,21 +123,13 @@ Decision decisionMaker::makeDecision(const TaskInfo& taskInfo, const SystemInfo&
         return decision;
     }
 
-    // S2. 特征编码（按契约拼接）：TODO(实现层)
-    //   S2.1 遍历 contract_.inputFields——**数组顺序即模型输入位置**，唯一真相源；
-    //   S2.2 source == "task" → 按 name 从 taskInfo.task 取值
-    //        source == "system" → 按 name 取 sysInfo 的对应分量（ucpu / unpu /
-    //        cpu_freq_khz / npu_freq_khz）
-    //   S2.3 契约要求而载荷未提供的任务键（或值非数值）→ 返回无效 Decision（映射 2002）；
-    //        **多余键一律忽略**
-    //   S2.4 归一化两次仿射，分母**只取 rawMin / rawMax**：
-    //        ① v = (x - rawMin) / (rawMax - rawMin)，rawMin == rawMax 取 0.5（不除零）
-    //        ② v = min + v * (max - min)
-    //        ③ 夹取到 [0,1]（越界不判失败）
-    //   S2.5 **不得硬编码任何量程字面量**（D-30）
+    // S2. 特征编码（按契约拼接）：**数组顺序即模型输入位置**，唯一真相源；实现见 codec
+    //   —— source / 键齐全性 / 两次仿射归一化 / 夹取 / 不硬编码量程（D-30）都在内核里。
     std::vector<float> encoded;
-    (void)taskInfo;
-    (void)sysInfo;
+    if (!codec::encodeFeatures(contract_, taskInfo, sysInfo, encoded)) {
+        // 键缺失、分量名未识别、值非有限数、契约未成形 —— 一律按推理失败处理
+        return decision;
+    }
 
     // S3. 推理：返回空列表即失败（含超时被 SetTerminate 取消，D-31）
     const std::vector<float> output = ONNXruntime::infer(encoded);
@@ -145,22 +138,8 @@ Decision decisionMaker::makeDecision(const TaskInfo& taskInfo, const SystemInfo&
     }
 
     // S4. 动作解码：argmax → 按契约 actions 查出唯一「处理器 + 目标频率」
-    if (contract_.actions.empty()) {
-        return decision;
-    }
-    std::size_t best = 0;
-    for (std::size_t i = 1; i < output.size(); ++i) {
-        if (output[i] > output[best]) {
-            best = i;
-        }
-    }
-    if (best >= contract_.actions.size()) {
-        // 输出维与动作数不匹配（契约第 2 道校验本应挡住，此处兜底）
-        return decision;
-    }
-    decision.action.device = contract_.actions[best].device;
-    decision.action.freqKHz = contract_.actions[best].freqKHz;
-    decision.valid = true;
+    //     （输出维与动作数不匹配、输出全为非有限数等情形由内核判无效）
+    decision = codec::decodeAction(contract_, output);
 
     // S5. 无副作用，返回
     return decision;
