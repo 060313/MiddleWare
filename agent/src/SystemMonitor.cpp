@@ -28,8 +28,9 @@ SystemInfo systemMonitor::getSystemInfo() {
 
 ResultInfo systemMonitor::setFreq(const Freq& freq) {
     // S1. 未装配 → 按「调度链未装配」报失败，不解引用空指针
+    //     message 与 §3.7 S1 一致（"monitor not ready"）；程序判定只认 reason（D-33）
     if (sys_ == nullptr) {
-        return ResultInfo{false, "system not ready", false, Reason::schedulerAbsent};
+        return ResultInfo{false, "monitor not ready", false, Reason::schedulerAbsent};
     }
 
     // S2. 原样透传（ok / message / adjusted / reason 一律不加工）
