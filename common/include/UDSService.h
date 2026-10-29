@@ -26,7 +26,8 @@ public:
     // 端点类型；实现层用 POSIX fd
     using Socket = int;
 
-    // 报文处理回调：入参（报文类型、纯载荷 JSON），返回应答帧（已含 8 字节头）
+    // 报文处理回调：入参（报文类型、纯载荷 JSON），返回**四键外壳 JSON**
+    // （不含 8 字节头——组壳由业务层做、加头由 route 做，见 D-27 / §4.6.6）
     using Handler = std::function<std::string(const std::string&, const std::string&)>;
 
     // 全静态类：禁止实例化
@@ -41,8 +42,9 @@ public:
     // 关 listener → unlink 端点。**不 join、不遍历 conns**（交给 serve 退出路径）。
     static void stop();
 
-    // 处理一帧：验 8 字节帧头并剥离 → 调 handler → 组四键外壳并加头。
-    // 帧级故障（魔数 / 版本 / 长度越界）回可读失败体；业务失败由 handler 决定。
+    // 处理一帧：验 8 字节帧头并剥离 → 调 handler → 前置 8 字节头返回。
+    // 帧级故障（魔数 / 版本 / 长度越界）由本方法自建 1001 / 1003 失败壳；
+    // 业务失败壳由 handler 返回，本方法原样透传、不解析。
     static std::string route(const std::string& requestFrame);
 
     // **服务循环（服务线程入口）**：epoll_wait 等事件 → wakeFd 可读则判停 →

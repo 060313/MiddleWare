@@ -96,12 +96,17 @@ serviceInterface ──依赖──► UDSService（静态）
 ## 状态
 
 框架完成、装配层可运行：`schedd --config <路径>` 会读配置 → 装配 13 类 → 首次加载模型 →
-建监听 → 起两线程 → 等 `SIGTERM`。待填充的实现集中在四处：
+建监听 → 起两线程 → 等 `SIGTERM`。各子系统按分工逐步落地实现与单元测试（`make test`）：
 
-| 模块 | 待补内容 |
+| 模块 | 状态 |
 |---|---|
-| `UDSService` | epoll 事件循环、切帧、半帧超时、帧头验/剥/加 |
-| `ONNXruntime` | 会话建立、`Run` 调用、超时取消（`SetOptions` + 看护线程）、输入维读取 |
-| `CPU` / `NPU` | sysfs 节点读写、`/proc/stat` 差分、`governor` 切换 |
-| `ContractFile` | 契约 JSON 解析 |
-| `serviceInterface::handleFrame` | 四键外壳与 JSON 编解码、错误码映射 |
+| `UDSService` | ✅ 已实现：epoll 事件循环、切帧、半帧超时、帧头验/剥/加（`test/udsservice_test.cpp`） |
+| `ONNXruntime` | ✅ 已实现：会话建立、`Run` 调用、超时取消（局部 `RunOptions` + 看护线程）、输入维读取（`test/onnxruntime_test.cpp`） |
+| `FileService` / `Timer` | ✅ 已实现（`test/fileservice_test.cpp` / `test/timer_test.cpp`） |
+| `CPU` / `NPU` | 待补：sysfs 节点读写、`/proc/stat` 差分、`governor` 切换 |
+| `ContractFile` | 待补：契约 JSON 解析 |
+| `serviceInterface::handleFrame` | 待补：四键外壳与 JSON 编解码、错误码映射 |
+
+`make test` 需要 ONNX Runtime SDK（测试与 `schedd` 一样链接 `-lonnxruntime`），
+镜像内未挂 SDK 时请先挂载到 `/opt/onnxruntime`：
+`docker run -v <sdk目录>:/opt/onnxruntime ...`；运行时需 `LD_LIBRARY_PATH=/opt/onnxruntime/lib`。
