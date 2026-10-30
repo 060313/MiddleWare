@@ -21,10 +21,11 @@
 
 #include "common/include/SchedDefs.h"
 #include "common/include/SchedTypes.h"
+#include "system/include/CPUFile.h"
 
 namespace sched {
 
-class CPU {
+class CPU : public openEulerCPUFile{
 public:
     // freqPath_:CPU设备频率路径；
     // statPath:CPU设备状态路径；
@@ -33,14 +34,13 @@ public:
     CPU(const std::string& freqPath=std::string(CPU_FREQ_PATH),
         const std::string& statPath=std::string(CPU_STAT_PATH),
         int freqMin = 0,
-        int freqMax = 0);
+        int freqMax = 0):openEulerCPUFile(freqPath,statPath,freqMin,freqMax){};
     ~CPU();
 
     //返回CPU设备信息
-    CPUInfo getCPUInfo();
-
-    //设置处理器频率
-    ResultInfo setFreq(const Freq& freq);
+    CPUInfo getCPUInfo(){
+        return getInfo();
+    }
 
 private:
     // 操作上锁：持 cpuLock_ 执行 fun 并转发其返回值（模板定义须在使用点可见，故放头文件）
@@ -50,22 +50,12 @@ private:
         return fun();
     }
     // 读档位表
-    bool readFreqTable();
-    // 写频率节点
-    bool writeFreq(int freqKHz);
-
-    std::string freqPath_;          // 频率目录
-    std::string statPath_;          // 状态目录
-    int freqMin_ = 0;               // 档位收窄下限（kHz；0 表不限）
-    int freqMax_ = 0;               // 档位收窄上限（kHz；0 表不限）
+    bool readFreqTable(){
+        readFreqTable();
+    }
 
     // 跨线程共享状态，一律在 cpuLock_ 下读写
     CPUInfo cpuInfo_;
-    std::vector<int> freqTable_;  // 可用频率表（kHz，已收窄）
-    uint64_t prevTotal_ = 0;      // 上次采样累计 jiffies（总）
-    uint64_t prevIdle_ = 0;       // 上次采样累计 jiffies（空闲）
-    bool hasPrevSample_ = false;  // 已有差分基准？首帧利用率为占位值
-
     mutable std::mutex cpuLock_;
 };
 

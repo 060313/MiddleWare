@@ -184,7 +184,6 @@ void testTaskAskPayload() {
     CHECK(data->find("action")->find("device")->asString() == "cpu");
     CHECK(data->find("action")->find("freq_khz")->asNumber() == 1000000.0);
     CHECK(data->find("result")->find("ok")->asBool());
-    CHECK(!data->find("result")->find("adjusted")->asBool());
 }
 
 void testGetState() {

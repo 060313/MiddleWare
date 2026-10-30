@@ -27,20 +27,16 @@ namespace sched {
 // 在**已升序**的档位表中找距 targetKHz 最近的合法档位。
 // 并列时取先出现者（即较小值，因表已升序）。空表返回 0。
 inline int nearestFreqKHz(const std::vector<int>& table, int targetKHz) {
-    if (table.empty()) {
-        return 0;
-    }
-    int best = table.front();
-    long long bestDiff = std::llabs(static_cast<long long>(targetKHz) - best);
-    for (const int freq : table) {
-        const long long diff = std::llabs(static_cast<long long>(targetKHz) - freq);
-        if (diff < bestDiff) {
-            best = freq;
-            bestDiff = diff;
-        }
-    }
-    return best;
+    if (table.empty()) return 0;
+    const auto r = std::equal_range(table.begin(), table.end(), targetKHz);
+    if (r.first != r.second) return targetKHz;          
+    if (r.first == table.begin()) return table.front(); 
+    if (r.first == table.end())   return table.back();  
+    const int hi = *r.first;                            
+    const int lo = *(r.first - 1);                      
+    return (targetKHz - lo <= hi - targetKHz) ? lo : hi;
 }
+
 
 // 节点文本转整数（形如 "1800000\n"）；空串或非数字返回 false。
 // **必须 try-catch**：std::stoll 对空串抛 invalid_argument、对超范围抛 out_of_range。

@@ -60,25 +60,24 @@ ResultInfo NPU::setFreq(const Freq& freq) {
     std::vector<int> table;
     withNPULock([&](){table = freqTable_;});
     if (table.empty()) {
-        return ResultInfo{false, "freq table unavailable", false, Reason::freqUnavailable};
+        return ResultInfo{false, "freq table unavailable", Reason::freqUnavailable};
     }
 
     int targetKHz = freq.freqKHz;
-    bool adjusted = false;
     if (!std::binary_search(table.begin(), table.end(), targetKHz)) {
         targetKHz = nearestFreqKHz(table, targetKHz);
-        adjusted = true;
     }
 
     // 仅 userspace 允许写 userspace/set_freq —— 先切策略
     if (FileService::read(npuPath_ + "/governor").find("userspace") != 0) {
         if (!FileService::write(npuPath_ + "/governor", "userspace")) {
-            return ResultInfo{false, "governor switch failed", adjusted, Reason::writeFailed};
+            return ResultInfo{false, "governor switch failed", Reason::writeFailed};
         }
     }
 
-    if (!writeFreq(targetKHz)) {
-        return ResultInfo{false, "write freq failed", adjusted, Reason::writeFailed};
+    bool writeOK=FileService::write(npuPath_ + "/userspace/set_freq",std::to_string(static_cast<long long>(targetKHz) * 1000));
+    if (!writeOK) {
+        return ResultInfo{false, "write freq failed", Reason::writeFailed};
     }
 
     // 回读刷新真实值（D-32：不与目标值比对、不作成败判据）；读失败保留写入前的值
@@ -86,7 +85,7 @@ ResultInfo NPU::setFreq(const Freq& freq) {
     if (parseInt(FileService::read(npuPath_ + "/cur_freq"), readHz))
         withNPULock([&](){npuInfo_.curFreqKHz = static_cast<int>(readHz / 1000);});
 
-    return ResultInfo{true, std::string(), adjusted, Reason::none};
+    return ResultInfo{true, std::string(), Reason::none};
 }
 
 // 读档位表
@@ -106,17 +105,6 @@ bool NPU::readFreqTable() {
     withNPULock([&](){freqTable_ = empty ? std::move(table) : std::move(narrowed);});
 
     return !empty;
-}
-
-bool NPU::writeFreq(int freqKHz) {
-    std::vector<int> table;
-    withNPULock([&](){table = freqTable_;});
-    if (!std::binary_search(table.begin(), table.end(), freqKHz)) {
-        return false;
-    }
-
-    return FileService::write(npuPath_ + "/userspace/set_freq",
-                              std::to_string(static_cast<long long>(freqKHz) * 1000));
 }
 
 } // namespace sched

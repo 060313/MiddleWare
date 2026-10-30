@@ -19,7 +19,7 @@ SystemInfo systemInterface::getSystemInfo() {
 
 ResultInfo systemInterface::setFreq(const Freq& freq) {
     if (mgr_ == nullptr) {
-        return ResultInfo{false, "system not ready", false, Reason::schedulerAbsent};
+        return ResultInfo{false, "system not ready", Reason::schedulerAbsent};
     }
     return mgr_->setFreq(freq);
 }

@@ -43,7 +43,6 @@ enum class Reason {
 struct ResultInfo {
     bool ok = false;                       // 本次操作是否成功
     std::string message;                   // 人读文本，**不参与程序判定**
-    bool adjusted = false;                 // 目标频率被夹取到最近合法档位（不判失败）
     Reason reason = Reason::none;          // 失败类别；ok == true 时恒为 none
 };
 
@@ -166,7 +165,6 @@ inline ActionInfo makeActionInfo(const Freq& action, const ResultInfo& result) {
 inline ActionInfo makeFailure(Reason reason, std::string message) {
     ResultInfo result;
     result.ok = false;
-    result.adjusted = false;
     result.reason = reason;
     result.message = std::move(message);
     return makeActionInfo(Freq{}, result);

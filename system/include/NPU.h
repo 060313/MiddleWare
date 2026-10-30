@@ -46,9 +46,6 @@ private:
     // 读档位表：解析（Hz → ÷1000）→ 去重升序 → 收窄 → 持锁替换 freqTable_（唯一写入点）
     bool readFreqTable();
 
-    // 经 FileService 写频率节点（写出前 ×1000 折成 Hz，D-21）
-    bool writeFreq(int freqKHz);
-
     std::string npuPath_;         // devfreq 挂点
     int freqMin_ = 0;             // 档位收窄下限（kHz；0 表不限）
     int freqMax_ = 0;             // 档位收窄上限（kHz；0 表不限）

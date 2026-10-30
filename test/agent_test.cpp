@@ -92,7 +92,7 @@ void testMonitor() {
     CHECK(std::fabs(mon.getSystemInfo().unpu - 0.30) < 1e-9);
 
     const ResultInfo ok = mon.setFreq(freq);            // 表已由 refresh 装配
-    CHECK(ok.ok && !ok.adjusted);
+    CHECK(ok.ok);
 }
 
 // ---- decisionExecutor ----

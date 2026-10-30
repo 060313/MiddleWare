@@ -110,7 +110,7 @@ void testNpuUnit() {
     CHECK(std::fabs(info.util - 0.42) < 1e-9);   // load = 42 → 0.42
 }
 
-// 5. 越界夹取：夹到收窄后的最大档并置 adjusted
+// 5. 越界夹取：夹到收窄后的最大档
 void testClampHigh() {
     std::printf("5. 越界夹取（目标远超上限）\n");
     resetCpu();
@@ -120,7 +120,7 @@ void testClampHigh() {
     f.device = "cpu";
     f.freqKHz = 5000000;
     const ResultInfo r = cpu.setFreq(f);
-    CHECK(r.ok && r.adjusted);
+    CHECK(r.ok);
     CHECK(get(kCpu + "/scaling_setspeed") == "1800000");   // 夹到收窄表内最近档，而非上限值 1900000
 }
 
@@ -134,7 +134,7 @@ void testClampTie() {
     f.device = "npu";
     f.freqKHz = 900000;   // 距 800000 与 1000000 均为 100000
     const ResultInfo r = npu.setFreq(f);
-    CHECK(r.ok && r.adjusted);
+    CHECK(r.ok);
     CHECK(get(kNpu + "/userspace/set_freq") == "800000000");   // D-21：×1000 后写出
 }
 

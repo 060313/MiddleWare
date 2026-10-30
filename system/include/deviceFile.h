@@ -18,10 +18,14 @@ namespace sched {
 class deviceFile {
     public:
         deviceFile(std::string freqPath,std::string statPath,int freqMin,int freqmax);
-        ~deviceFile();
-        virtual deviceInfo getInfo();
-        virtual void setFreq(Freq freq);
-    private:
+        virtual ~deviceFile()=default;
+    protected:
+        virtual deviceInfo& getInfo()=0;
+        virtual ResultInfo setFreq(const Freq& freq)=0;
+
+        template<typename LockFn>
+        bool readFreqTable(int divisor, LockFn &&withLock);
+        std::vector<int> freqTable_; 
         std::string freqPath_;
         std::string statPath_;
         int freqMin_ = 0;               

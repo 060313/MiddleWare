@@ -5,7 +5,7 @@
 // 设计要点：
 //   - 只有 sys 一个关联属性（构造注入），**不缓存、不采样**：刷新由后台
 //     systemManager::refreshSystemInfo 承担，本类纯转发（读的是 System 侧缓存）；
-//   - setFreq 只作通道，**不加工结果**（ok / message / adjusted / reason 原样透传）。
+//   - setFreq 只作通道，**不加工结果**（ok / message / reason 原样透传）。
 
 #ifndef SCHED_AGENT_SYSTEMMONITOR_H
 #define SCHED_AGENT_SYSTEMMONITOR_H

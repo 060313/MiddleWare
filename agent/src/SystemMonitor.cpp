@@ -29,10 +29,10 @@ SystemInfo systemMonitor::getSystemInfo() {
 ResultInfo systemMonitor::setFreq(const Freq& freq) {
     // S1. 未装配 → 按「调度链未装配」报失败，不解引用空指针
     if (sys_ == nullptr) {
-        return ResultInfo{false, "system not ready", false, Reason::schedulerAbsent};
+        return ResultInfo{false, "system not ready", Reason::schedulerAbsent};
     }
 
-    // S2. 原样透传（ok / message / adjusted / reason 一律不加工）
+    // S2. 原样透传（ok / message / reason 一律不加工）
     return sys_->setFreq(freq);
 }
 

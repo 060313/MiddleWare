@@ -58,15 +58,15 @@ bool systemManager::refreshSystemInfo() {
 ResultInfo systemManager::setFreq(const Freq& freq) {
     if (freq.device == "cpu") {
         return (cpu_ == nullptr)
-                   ? ResultInfo{false, "unknown device", false, Reason::deviceUnknown}
+                   ? ResultInfo{false, "unknown device", Reason::deviceUnknown}
                    : cpu_->setFreq(freq);
     }
     if (freq.device == "npu") {
         return (npu_ == nullptr)
-                   ? ResultInfo{false, "unknown device", false, Reason::deviceUnknown}
+                   ? ResultInfo{false, "unknown device", Reason::deviceUnknown}
                    : npu_->setFreq(freq);
     }
-    return ResultInfo{false, "unknown device", false, Reason::deviceUnknown};
+    return ResultInfo{false, "unknown device", Reason::deviceUnknown};
 }
 
 } // namespace sched
