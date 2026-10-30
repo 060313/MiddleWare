@@ -39,8 +39,8 @@ public:
                   int npuFreqMax = 0);
     ~systemManager();
 
-    // 持锁取 systemInfo 副本返回（纯读，不触发采样）
-    SystemInfo askSystemInfo();
+    // 持锁把 systemInfo 副本写入出参 out（纯读，不触发采样）；不出借内部状态
+    void askSystemInfo(SystemInfo& out);
 
     // 定时刷新入口：读两路设备（锁外）→ 取四个特征分量 → 持锁覆盖缓存
     bool refreshSystemInfo();

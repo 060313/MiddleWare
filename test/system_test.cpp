@@ -90,7 +90,8 @@ void testParseTable() {
     std::printf("1. 档位表解析（乱序 + 重复 → 去重升序）\n");
     resetCpu();
     CpuProbe cpu(kCpu, kProc);
-    cpu.getCPUInfo();                        // 触发懒加载装表
+    CPUInfo warm;
+    cpu.getCPUInfo(warm);                    // 触发懒加载装表（出参只是载体，本文用不到）
     const std::vector<int>& table = cpu.table();
     CHECK(table.size() == 3);
     CHECK(table[0] == 1600000 && table[1] == 1800000 && table[2] == 2000000);
@@ -101,7 +102,8 @@ void testNarrow() {
     std::printf("2. 档位收窄（freqMin / freqMax）\n");
     resetCpu();
     CpuProbe cpu(kCpu, kProc, 1700000, 1900000);
-    cpu.getCPUInfo();
+    CPUInfo info;
+    cpu.getCPUInfo(info);
     const std::vector<int>& table = cpu.table();
     CHECK(table.size() == 1 && table[0] == 1800000);
 }
@@ -111,7 +113,8 @@ void testNarrowEmpty() {
     std::printf("3. 收窄后为空 → 退化整表（否则 setFreq 永远 3002）\n");
     resetCpu();
     CpuProbe cpu(kCpu, kProc, 5000000, 6000000);   // 上下限高于所有档位
-    cpu.getCPUInfo();
+    CPUInfo info;
+    cpu.getCPUInfo(info);
     const std::vector<int>& table = cpu.table();
     CHECK(table.size() == 3);   // 退化：仍是完整三档
 }
@@ -121,7 +124,8 @@ void testNpuUnit() {
     std::printf("4. NPU 单位折算（Hz → kHz，D-21）\n");
     resetNpu();
     NpuProbe npu(kNpu, kNpu);   // statPath 显式给同目录：留空会退化为宏 NPU_STAT_PATH
-    const NPUInfo info = npu.getNPUInfo();
+    NPUInfo info;
+    npu.getNPUInfo(info);
     CHECK(npu.table().size() == 3);
     CHECK(npu.table()[0] == 800000 && npu.table()[2] == 1200000);
     CHECK(info.curFreqKHz == 1000000);
@@ -133,7 +137,8 @@ void testClampHigh() {
     std::printf("5. 越界夹取（目标远超上限）\n");
     resetCpu();
     CPU cpu(kCpu, kProc, 900000, 1900000);   // 收窄后表 = {1600000, 1800000}
-    cpu.getCPUInfo();   // 常规路径是「先采集再调频」；setFreq 亦会懒加载，此处非必需
+    CPUInfo info;
+    cpu.getCPUInfo(info);   // 常规路径是「先采集再调频」；setFreq 亦会懒加载，此处非必需
     Freq f;
     f.device = "cpu";
     f.freqKHz = 5000000;
@@ -147,7 +152,8 @@ void testClampTie() {
     std::printf("6. 并列夹取（等距 → 取较小档）\n");
     resetNpu();
     NPU npu(kNpu, kNpu);   // 表 = {800000, 1000000, 1200000} kHz
-    npu.getNPUInfo();
+    NPUInfo info;
+    npu.getNPUInfo(info);
     Freq f;
     f.device = "npu";
     f.freqKHz = 900000;   // 距 800000 与 1000000 均为 100000
@@ -162,7 +168,8 @@ void testGovernor() {
     resetCpu();
     put(kCpu + "/scaling_governor", "schedutil\n");
     CPU cpu(kCpu, kProc);
-    cpu.getCPUInfo();
+    CPUInfo info;
+    cpu.getCPUInfo(info);
     Freq f;
     f.device = "cpu";
     f.freqKHz = 1800000;
@@ -177,14 +184,17 @@ void testReadbackNotCompared() {
     resetCpu();
     put(kCpu + "/scaling_cur_freq", "1800000\n");   // 桩恒为 1800000，模拟驱动滞后
     CPU cpu(kCpu, kProc);
-    cpu.getCPUInfo();
+    CPUInfo info;
+    cpu.getCPUInfo(info);
     Freq f;
     f.device = "cpu";
     f.freqKHz = 1600000;
     const ResultInfo r = cpu.setFreq(f);
     CHECK(r.ok);                                    // 写入成功 → ok，尽管回读仍是 1800000
     CHECK(get(kCpu + "/scaling_setspeed") == "1600000");
-    CHECK(cpu.getCPUInfo().curFreqKHz == 1800000);  // 刷的是回读值，不是目标值
+    CPUInfo after;
+    cpu.getCPUInfo(after);
+    CHECK(after.curFreqKHz == 1800000);             // 刷的是回读值，不是目标值
 }
 
 // 9. /proc/stat 两帧差分：首帧占位 0，第二帧为真值
@@ -196,13 +206,17 @@ void testProcStatDiff() {
 
     systemManager mgr(kCpu, kNpu, kProc, kNpu);   // 第 4 参显式给：留空退化为宏 NPU_STAT_PATH
     mgr.refreshSystemInfo();
-    CHECK(mgr.askSystemInfo().ucpu == 0.0);   // 首帧无基准 → 占位 0
-    CHECK(std::fabs(mgr.askSystemInfo().unpu - 0.42) < 1e-9);   // load 单帧即得
+    SystemInfo first;
+    mgr.askSystemInfo(first);
+    CHECK(first.ucpu == 0.0);                    // 首帧无基准 → 占位 0
+    CHECK(std::fabs(first.unpu - 0.42) < 1e-9);  // load 单帧即得
 
     // total 9950（+350），idle 8250（+150）→ util = 1 - 150/350 ≈ 0.5714
     resetProc("1100", "600", "8100", "150");
     mgr.refreshSystemInfo();
-    const double util = mgr.askSystemInfo().ucpu;
+    SystemInfo second;
+    mgr.askSystemInfo(second);
+    const double util = second.ucpu;
     CHECK(std::fabs(util - (1.0 - 150.0 / 350.0)) < 1e-9);
 }
 
@@ -212,7 +226,8 @@ void testMissingNodes() {
     std::printf("10. 节点缺失（零值兜底 + setFreq 回 3002）\n");
     const std::string bad = kRoot + "/nonexistent";
     CpuProbe cpu(bad, bad);
-    const CPUInfo info = cpu.getCPUInfo();
+    CPUInfo info;
+    cpu.getCPUInfo(info);
     CHECK(cpu.table().empty() && info.curFreqKHz == 0 && info.util == 0.0);
 
     Freq f;
@@ -222,7 +237,8 @@ void testMissingNodes() {
     CHECK(!r.ok && r.reason == Reason::freqUnavailable);
 
     NpuProbe npu(bad, bad);
-    const NPUInfo ninfo = npu.getNPUInfo();
+    NPUInfo ninfo;
+    npu.getNPUInfo(ninfo);
     CHECK(npu.table().empty() && ninfo.curFreqKHz == 0 && ninfo.util == 0.0);
 
     Freq fn;
@@ -268,7 +284,7 @@ void testConcurrent() {
 
     systemManager mgr(kCpu, kNpu, kProc, kNpu);
     std::thread t1([&mgr] { for (int i = 0; i < 100; ++i) { mgr.refreshSystemInfo(); } });
-    std::thread t2([&mgr] { for (int i = 0; i < 100; ++i) { (void)mgr.askSystemInfo(); } });
+    std::thread t2([&mgr] { for (int i = 0; i < 100; ++i) { SystemInfo si; mgr.askSystemInfo(si); } });
     std::thread t3([&mgr] {
         for (int i = 0; i < 100; ++i) {
             Freq f;

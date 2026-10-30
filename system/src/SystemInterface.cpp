@@ -9,19 +9,21 @@
 
 namespace sched {
 
-systemInterface::systemInterface(systemManager* mgr) : mgr_(mgr) {}
+    systemInterface::systemInterface(systemManager* mgr) : mgr_(mgr) {}
 
-systemInterface::~systemInterface() = default;
+    systemInterface::~systemInterface() = default;
 
-SystemInfo systemInterface::getSystemInfo() {
-    return (mgr_ == nullptr) ? SystemInfo{} : mgr_->askSystemInfo();
-}
-
-ResultInfo systemInterface::setFreq(const Freq& freq) {
-    if (mgr_ == nullptr) {
-        return ResultInfo{false, "system not ready", Reason::schedulerAbsent};
+    SystemInfo systemInterface::getSystemInfo() {
+        SystemInfo info=SystemInfo{};
+        if(mgr_!=nullptr) mgr_->askSystemInfo(info);
+        return info;
     }
-    return mgr_->setFreq(freq);
-}
+
+    ResultInfo systemInterface::setFreq(const Freq& freq) {
+        if (mgr_ == nullptr) {
+            return ResultInfo{false, "system not ready", Reason::schedulerAbsent};
+        }
+        return mgr_->setFreq(freq);
+    }
 
 } // namespace sched

@@ -24,16 +24,15 @@ namespace sched {
 
 class CPU : public openEulerCPUFile{
 public:
-    CPU(const std::string& freqPath,
-        const std::string& statPath,
-        int freqMin = 0,
-        int freqMax = 0):openEulerCPUFile(freqPath,statPath,freqMin,freqMax){};
+    CPU(const std::string& freqPath=std::string(CPU_FREQ_PATH),const std::string& statPath=std::string(CPU_STAT_PATH),int freqMin = 0,int freqMax = 0)
+                :openEulerCPUFile(freqPath,statPath,freqMin,freqMax){};
     ~CPU() override;
 
-    CPUInfo getCPUInfo();
+    // 出参写本次采样（内部 refreshInfo 采样后持 cpuLock_ 拷出）；**不返回引用**，锁外触碰不到内部状态
+    void getCPUInfo(CPUInfo& out);
 
     // 覆写基类
-    CPUInfo& getInfo() override;
+    void refreshInfo() override;
     ResultInfo setFreq(const Freq& freq) override;
 
 private:

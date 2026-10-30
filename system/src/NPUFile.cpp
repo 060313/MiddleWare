@@ -8,8 +8,8 @@
 
 namespace sched {
 
-NPUFile::NPUFile(const std::string& freqPath, const std::string& statPath,
-                 int freqMin, int freqMax)
-    : deviceFile(freqPath, statPath, freqMin, freqMax) {}
+    NPUFile::NPUFile(const std::string& freqPath, const std::string& statPath,
+                    int freqMin, int freqMax)
+        : deviceFile(freqPath, statPath, freqMin, freqMax) {}
 
 } // namespace sched

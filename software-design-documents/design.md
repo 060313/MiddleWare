@@ -7,7 +7,7 @@
 | 文档性质 | 软件详细设计说明书 |
 | 目标平台 | openEuler / RK3588（首版验证走 llama.cpp 插桩路径，RKLLM 后置移植） |
 | 版本 / 日期 | v1.0 / 2026-10-17 |
-| 规模 | 13 个设计类 · 47 项属性 · 62 个方法 · 14 条类间关系 · 36 条设计裁决 |
+| 规模 | 13 个设计类 · 49 项属性 · 63 个方法 · 14 条类间关系 · 36 条设计裁决 |
 | 阅读体例 | 每章开头给出该章回答的问题；设计取舍以 `【D-xx】` 就地写在相关节，§5 只作索引、**正文为权威** |
 
 **文档地图**
@@ -85,9 +85,9 @@
 |---|---|---|
 | 1 | `systemMonitor` → `systemInterface::getSystemInfo()` | 获取系统状态 |
 | 2 | `systemInterface` → `systemManager::askSystemInfo()` | 请求系统状态 |
-| 3 | `systemManager` → `systemInterface` | 返回 `SystemInfo` |
+| 3 | `systemManager` → `systemInterface` | 经出参写回 `SystemInfo` 副本 |
 
-**实现入口**：逐级转交见 §3.1 / §3.6 / §3.10 的 `getSystemInfo`，末端取缓存见 §3.11 `askSystemInfo`（持读锁取副本）。
+**实现入口**：逐级转交见 §3.1 / §3.6 / §3.10 的 `getSystemInfo`，末端取缓存见 §3.11 `askSystemInfo`（持 `sysLock` 把缓存拷入出参）。
 
 ![图 2-2　采集系统状态用例设计顺序图](images/采集系统状态用例设计.png)
 
@@ -97,15 +97,15 @@
 | 步 | 设计类协作 | 说明 |
 |---|---|---|
 | 1 | `Timer::poll()` → `systemManager::refreshSystemInfo()` | 到期回调触发刷新（`Timer` 不建线程，由监控线程循环调 `poll()` 驱动） |
-| 2 | `systemManager` → `NPU::getNPUInfo()` | 读取 NPU 参数 |
+| 2 | `systemManager` → `NPU::getNPUInfo(npuInfo)` | 读设备并经出参写回 NPU 参数 |
 | 3 | `NPU` → `FileService` | 经文件服务读 NPU 设备节点 |
 | 4 | `FileService` → `NPU` | 返回节点文本（`std::string`），由 `NPU` 解析组装为 `NPUInfo` |
 | 5 | `NPU` → `systemManager` | 返回 `NPUInfo` |
-| 6 | `systemManager` → `CPU::getCPUInfo()` | 读取 CPU 参数 |
+| 6 | `systemManager` → `CPU::getCPUInfo(cpuInfo)` | 读设备并经出参写回 CPU 参数 |
 | 7 | `CPU` → `FileService` | 经文件服务读 CPU 设备节点 |
 | 8 | `FileService` → `CPU` | 返回节点文本（`std::string`），由 `CPU` 解析组装为 `CPUInfo` |
 | 9 | `CPU` → `systemManager` | 返回 `CPUInfo` |
-| 10 | `systemManager` → `systemManager::setSystemInfo` | 刷新 `SystemInfo` |
+| 10 | `systemManager` → `systemInfo`（持 `sysLock`） | 覆盖写缓存四个分量并释放锁 |
 
 **实现入口**：到期判定见 §3.5 `Timer::poll`，采样体见 §3.11 `refreshSystemInfo`（读设备在锁外、写缓存持写锁），设备读取见 §3.12 / §3.13 的 `getCPUInfo` / `getNPUInfo`。
 
@@ -134,7 +134,7 @@
 
 **实现入口**：五级流转（标识路由 → 二选一 → 档位夹取 → governor 检查 → 写节点）见 §3.11 `systemManager::setFreq`，设备侧见 §3.12 / §3.13 的 `setFreq`；失败原因经 `ResultInfo.reason` 上传（D-33）。
 
-异常流：目标处理器不可用（freq 指向的设备未创建 / 标识未知）→ 返回 ResultInfo{ok=false, reason=Reason::deviceUnknown, message="unknown device"}，不误投到另一台设备；频率表不可用（档位表为空）→ 返回 ResultInfo{ok=false, reason=Reason::freqUnavailable, message="freq table unavailable"}，不写节点；频率越界 → 夹取到最近合法档位（不判失败）；写入失败 → 返回 ResultInfo{ok=false, reason=Reason::writeFailed, message=...}，info.curFreqKHz 保持原值；**回读值与目标不符不判失败**（驱动滞后，见 D-32），生效性由下一拍采样观察。以上失败均沿步 5 → 步 6 逐级回传；系统中至多一台设备的频率被改动（CPU / NPU 二选一，一次 setFreq 只走 alt 的一条分支）。**执行失败不参与降级判定**——降级只面向推理失败（D-08 / D-34），上述失败仅透传 `ok=false` 与 `reason` 并记日志。
+异常流：目标处理器不可用（freq 指向的设备未创建 / 标识未知）→ 返回 ResultInfo{ok=false, reason=Reason::deviceUnknown, message="unknown device"}，不误投到另一台设备；频率表不可用（档位表为空）→ 返回 ResultInfo{ok=false, reason=Reason::freqUnavailable, message="freq table unavailable"}，不写节点；频率越界 → 夹取到最近合法档位（不判失败）；写入失败 → 返回 ResultInfo{ok=false, reason=Reason::writeFailed, message=...}，设备缓存中的 `curFreqKHz`（CPU 为 `cpuInfo_`、NPU 为 `npuInfo_`）保持原值；**回读值与目标不符不判失败**（驱动滞后，见 D-32），生效性由下一拍采样观察。以上失败均沿步 5 → 步 6 逐级回传；系统中至多一台设备的频率被改动（CPU / NPU 二选一，一次 setFreq 只走 alt 的一条分支）。**执行失败不参与降级判定**——降级只面向推理失败（D-08 / D-34），上述失败仅透传 `ok=false` 与 `reason` 并记日志。
 
 ![图 2-4　设置处理器频率用例设计顺序图](images/设置处理器频率用例设计.png)
 
@@ -641,7 +641,7 @@
 | 属性 | `mgr` | `systemManager*` | private | 初值 `nullptr` | — | 关联，构造注入 |
 | 方法 | `systemInterface` | `systemManager* mgr`（关联，构造注入） | public → — | `mgr` 可为 `nullptr`（由 `getSystemInfo` / `setFreq` S1 兜底） | `mgr` 指向注入对象 | 接收 System 管理器引用；**只做赋值、不做 I/O**（本类无其他属性需初始化），且不拥有 `mgr` |
 | 方法 | `~systemInterface` | 无 | public → — | — | 无状态改变 | **平凡析构**：不拥有 `mgr`；`CPU` / `NPU` 的所有者是 `systemManager`，设备对象的销毁由其析构承担 |
-| 方法 | `getSystemInfo` | 无 | public → `SystemInfo` | `mgr` 已装配 | 无副作用 | 转交 `mgr->askSystemInfo()`，汇聚设备状态返回 |
+| 方法 | `getSystemInfo` | 无 | public → `SystemInfo` | `mgr` 已装配 | 无副作用 | 造零值 `SystemInfo` 作实参转交 `mgr->askSystemInfo()`，取其出参副本返回（门面零逻辑透传） |
 | 方法 | `setFreq` | `const Freq&` | public → `ResultInfo` | `mgr` 已装配；`freq` 目标设备存在 | 设备状态改变 | 转交 `mgr->setFreq(freq)`，原样返回其 `ResultInfo`（`ok` / `message` / `reason`） |
 
 **算法步骤**
@@ -655,7 +655,7 @@
 
 **`systemInterface::getSystemInfo()`**
 - S1. 前置校验：`mgr` 非空；为空 → 返回零值 `SystemInfo`。
-- S2. 转交 `mgr->askSystemInfo()`，由其汇聚 CPU/NPU 设备状态。
+- S2. 造零值 `SystemInfo` 局部量，作实参转交 `mgr->askSystemInfo(info)`——由其在锁内把缓存拷入该出参。
 - S3. 原样返回汇聚结果；**本方法只做转发，不做加工**（门面零逻辑透传）。
 
 **`systemInterface::setFreq(freq)`**
@@ -668,53 +668,51 @@
 | 类 / 属性 / 方法 | 名称 | 类型 / 参数 | 可见性 / 返回 | 初值 / 前置 | — / 后置 | — / 功能说明 |
 |---|---|---|---|---|---|---|
 | 类 | `systemManager` | 管理器 · System 子系统 | private | — | — | — |
-| 属性 | `cpu` | `CPU*` | private | 初值 `nullptr` | — | **组合**（生存期由本类负责） |
-| 属性 | `npu` | `NPU*` | private | 初值 `nullptr` | — | **组合**（生存期由本类负责） |
-| 属性 | `systemInfo` | `SystemInfo` | private | 初值零值快照 | — | 最近一次刷新的 `SystemInfo` 缓存（含设备原始量 + 特征分量），后台 `refreshSystemInfo` 定时刷新、前台 `askSystemInfo` 纯读；**跨线程读写受 `sysMutex` 保护** |
-| 属性 | `sysMutex` | `std::mutex` | private | 默认构造 | — | 保护 `systemInfo` 的跨线程读写：监控线程写（`refreshSystemInfo` → `setSystemInfo`）、服务线程读（`askSystemInfo`）。**只保护内存缓存，不保护设备 I/O**（I/O 在锁外进行，避免长时间持锁） |
-| 方法 | `systemManager` | `const std::string& cpuFreqPath`, `const std::string& npuFreqPath`, `const std::string& statPath`（三者设备/统计文件路径，可注入伪 sysfs）、`int cpuFreqMin = 0`, `int cpuFreqMax = 0`, `int npuFreqMin = 0`, `int npuFreqMax = 0`（四个档位收窄上下限，来源 §4.3.3） | 同子系统 → — | 路径可为空（为空则退化为对应宏定义默认：`CPU_FREQ_PATH` / `NPU_PATH` / `CPU_STAT_PATH`）；四个收窄值非负（`0` 表不限） | `cpu`、`npu` 指向**新建**的设备对象（**组合**，生存期归本类）；`systemInfo` 为零值快照 | 创建并持有 `CPU` 与 `NPU` 设备对象，把各自路径与档位收窄上下限分别注入二者（**本类不保留这四个值**——它们是设备的约束，落 `CPU::freqMin/freqMax`、`NPU::freqMin/freqMax`）；**不在构造期读设备节点**（`freqTable` 由首次 `getCPUInfo` / `getNPUInfo` 懒加载，收窄亦在彼时进行）；**`systemInfo` 置零值快照（不采样，缓存由后台 `refreshSystemInfo` 首次刷新）** |
-| 方法 | `~systemManager` | 无 | 同子系统 → — | — | `cpu` / `npu` 两设备对象销毁并置 `nullptr` | **本类是 `CPU` / `NPU` 的唯一所有者**（组合），析构删二者并置空；`systemInfo` 值语义成员随对象自动销毁 |
-| 方法 | `askSystemInfo` | 无 | 同子系统 → `SystemInfo` | — | 无副作用 | **持 `sysMutex` 读锁**取缓存 `systemInfo` 副本后返回（纯读；采集/刷新由后台 `refreshSystemInfo` 承担） |
-| 方法 | `refreshSystemInfo` | 无 | public → `bool` | `cpu`、`npu` 已创建（构造装配） | `systemInfo` 刷新；失败保持原值 | 定时刷新入口（由 `Timer` 到期回调驱动，见 §3.5）：读 CPU/NPU → 组装 `SystemInfo`（含特征分量）→ `setSystemInfo` 写缓存；**读设备不持锁，写锁在 `setSystemInfo` 内获取** |
-| 方法 | `setSystemInfo` | `const SystemInfo&` | public → `void` | — | `systemInfo` 覆盖更新 | **持 `sysMutex` 写锁**覆盖式写入 `systemInfo` 缓存（纯 setter，不采集、不计算） |
-| 方法 | `setFreq` | `const Freq&` | 同子系统 → `ResultInfo` | `freq` 设备标识合法；目标设备未创建时按异常流返回（**不解引用空指针**） | 目标设备状态改变 | 按目标设备类型**二选一**路由 → 先验目标设备已创建，未创建（`nullptr`）→ 返回 `ResultInfo{ok=false, reason=Reason::deviceUnknown, message="unknown device"}`；已创建则调 `cpu->setFreq()` 或 `npu->setFreq()`（**每次只走其中一条分支**），原样返回其 `ResultInfo` |
+| 属性 | `cpu` | `std::unique_ptr<CPU>` | private | 默认构造为空 | — | **组合**（生存期由本类负责）：构造体内 `make_unique` 装配，析构由 `unique_ptr` 自动 delete |
+| 属性 | `npu` | `std::unique_ptr<NPU>` | private | 默认构造为空 | — | **组合**（生存期由本类负责）：同上 |
+| 属性 | `systemInfo` | `SystemInfo` | private | 初值零值快照 | — | 最近一次刷新的 `SystemInfo` 缓存（四个特征分量 `ucpu` / `unpu` / `cpuFreqKHz` / `npuFreqKHz`；设备原始量不嵌入），后台 `refreshSystemInfo` 定时覆盖写、前台 `askSystemInfo` 纯读；**跨线程读写受 `sysLock` 保护** |
+| 属性 | `sysLock` | `std::mutex` | private | 默认构造 | — | 保护 `systemInfo` 的跨线程读写：监控线程写（`refreshSystemInfo` 持锁覆盖写）、服务线程读（`askSystemInfo` 持锁拷入出参）。**只保护内存缓存，不保护设备 I/O**（I/O 在锁外进行，避免长时间持锁） |
+| 方法 | `systemManager` | `const std::string& cpuFreqPath`、`const std::string& npuFreqPath`、`const std::string& cpuStatPath`、`const std::string& npuStatPath`（四者设备/统计文件路径，均可注入伪 sysfs）、`int cpuFreqMin = 0`、`int cpuFreqMax = 0`、`int npuFreqMin = 0`、`int npuFreqMax = 0`（四个档位收窄上下限，来源 §4.3.3） | 同子系统 → — | 路径可为空（为空则退化为对应宏定义默认：`CPU_FREQ_PATH` / `NPU_FREQ_PATH` / `CPU_STAT_PATH` / `NPU_STAT_PATH`，**NPU 状态路径不随 NPU 频率路径联动**）；四个收窄值非负（`0` 表不限） | `cpu`、`npu` 指向**新建**的设备对象（**组合**，生存期归本类）；`systemInfo` 为零值快照 | 创建并持有 `CPU` 与 `NPU` 设备对象，把各自路径与档位收窄上下限分别注入二者（**本类不保留这四个值**——它们是设备的约束，落 `CPU::freqMin/freqMax`、`NPU::freqMin/freqMax`）；**不在构造期读设备节点**（`freqTable` 由首次 `getCPUInfo` / `getNPUInfo` 懒加载，收窄亦在彼时进行）；**`systemInfo` 置零值快照（不采样，缓存由后台 `refreshSystemInfo` 首次刷新）** |
+| 方法 | `~systemManager` | 无 | 同子系统 → — | — | 两个 `unique_ptr` 自动析构，`CPU` / `NPU` 对象随之销毁 | **本类是 `CPU` / `NPU` 的唯一所有者**（组合），两指针随成员析构释放；`systemInfo` 值语义成员随对象自动销毁 |
+| 方法 | `askSystemInfo` | `SystemInfo& out`（出参，写缓存副本） | 同子系统 → `void` | `systemInfo` 已装配（构造即置零值） | `out` 写入缓存副本；`systemInfo` 本身不变 | **持 `sysLock`** 把缓存 `systemInfo` 拷入 `out`（纯读；采集/刷新由后台 `refreshSystemInfo` 承担）；**不返回引用、不出借内部状态**，锁释放后调用方持有的只是一份副本 |
+| 方法 | `refreshSystemInfo` | 无 | public → `bool` | `cpu`、`npu` 已创建（构造装配） | `systemInfo` 覆盖刷新；`cpu` / `npu` 为空时返回 `false` 且不改缓存 | 定时刷新入口（由 `Timer` 到期回调驱动，见 §3.5）：读 NPU → 读 CPU → 取四个特征分量 → **持 `sysLock` 覆盖写** `systemInfo`；**读设备与组装全在锁外** |
+| 方法 | `setFreq` | `const Freq&` | 同子系统 → `ResultInfo` | `freq` 设备标识合法；目标设备未创建时按异常流返回（**不解引用空指针**） | 目标设备状态改变 | 按目标设备类型**二选一**路由 → 先验目标设备已创建，未创建（空 `unique_ptr`）→ 返回 `ResultInfo{ok=false, reason=Reason::deviceUnknown, message="unknown device"}`；已创建则调 `cpu->setFreq()` 或 `npu->setFreq()`（**每次只走其中一条分支**），原样返回其 `ResultInfo` |
 
 > **【D-14｜约定】`Freq` 语义**：`Freq` 为**设计层动作类型**——既是 UC1 决策产出的动作单元，也是 UC3 调频的入参，承载「**目标设备标识 + 目标频率**」。`systemManager::setFreq` 据其中的设备标识判定路由方向（`CPU` / `NPU`），`decisionExecutor` 据其下发**一次**。设备边界类只处理目标设备与自身匹配的 `freq`；**一次 `setFreq` 只通向其中一台设备**（CPU / NPU 互斥，无"同时下发"或"逐个下发"语义）。**物理写频率**由设备类在 `setFreq` 内直接经 `FileService::write` 完成，**不再单设私有方法**——目标值已在 `setFreq` S1 被夹取到表内，另设一层只余重复校验；对外仍只有 `setFreq(const Freq&)` 一名（同一类内不得两名同职、亦不得一名两职）。
 
-> **【D-15｜约定】系统状态类型划分**：`SystemInfo`（系统级）、`CPUInfo` / `NPUInfo`（设备级）**三类并列**——**无继承关系**；`SystemInfo` 在系统层面**聚合**两份设备状态（`refreshSystemInfo` 在此汇聚）并承载特征分量，`CPUInfo` / `NPUInfo` 各自只描述单一设备。**`SystemInfo` 为具体结构体（值语义）**，成员为 `cpuInfo` / `npuInfo`（各一份设备状态）+ 四个特征分量 `ucpu` / `unpu` / `cpuFreqKHz` / `npuFreqKHz`——**可复制、可按值传返**，故 §2 与 §3 各处「按值返回 `SystemInfo`」的写法成立。`SystemStateSnapshot`（对外应答载荷）**不属于系统状态类型**。
+> **【D-15｜约定】系统状态类型划分**：`SystemInfo`（系统级）与 `CPUInfo` / `NPUInfo`（设备级）**互不包含、互不继承**；`SystemInfo` 只承载四个特征分量 `ucpu` / `unpu` / `cpuFreqKHz` / `npuFreqKHz`，**不嵌入两份设备状态**——设备原始量（`util` / `curFreqKHz`）留在设备信息内，由 `refreshSystemInfo` 逐字段提取后写缓存。`CPUInfo` / `NPUInfo` 字段恰好相同（`util` / `curFreqKHz`），共用 `deviceInfo` 基类承载（`deviceInfo` 只是**字段载体、不是设计类**，不入 §1），二者互为兄弟、不互相派生。`SystemInfo` 为具体结构体（值语义）——可复制、可按值传返（`askSystemInfo` 虽以出参写出，写出的仍是这份值语义副本），故 §2 与 §3 各处「按值传递 / 按值返回 `SystemInfo`」的写法成立。`SystemStateSnapshot`（对外应答载荷）**不属于系统状态类型**。
 
-> **【D-16｜约定】有效性不设字段**：有效性**由定时刷新保证**——缓存只由 `refreshSystemInfo` 定时覆盖写入，读到即在时效内有效（陈旧度 ≤ 一个 `Timer::intervalMs`）；读节点失败**按零值兜底并照常组装**。三类状态类型均**不设 `valid` 类字段**，不中断采集、不回退旧快照；调用方据数值本身判断可用性。
+> **【D-16｜约定】有效性不设字段**：有效性**由定时刷新保证**——缓存只由 `refreshSystemInfo` 定时覆盖写入，读到即在时效内有效（陈旧度 ≤ 一个 `Timer::intervalMs`）；读节点失败**保留上一拍的旧值**（首拍或尚无旧值时为零值），**不把一次读抖动打成 0**，也不中断采集、不整体回退快照。三类状态类型均**不设 `valid` 类字段**，调用方据数值本身判断可用性。
 
 **算法步骤**
 
-**`systemManager::systemManager(cpuFreqPath, npuFreqPath, statPath, cpuFreqMin, cpuFreqMax, npuFreqMin, npuFreqMax)`**
-- S1. **创建** `CPU` 对象（以 `cpuFreqPath`、`statPath` 与 `cpuFreqMin`、`cpuFreqMax` 构造注入），指针存入 `cpu`——**组合**，生存期归本类。
-- S2. **创建** `NPU` 对象（以 `npuFreqPath` 与 `npuFreqMin`、`npuFreqMax` 构造注入），指针存入 `npu`——**组合**，生存期归本类。
+**`systemManager::systemManager(cpuFreqPath, npuFreqPath, cpuStatPath, npuStatPath, cpuFreqMin, cpuFreqMax, npuFreqMin, npuFreqMax)`**
+- S1. **创建** `CPU` 对象（以 `cpuFreqPath`、`cpuStatPath` 与 `cpuFreqMin`、`cpuFreqMax` 构造注入），由 `cpu` 这个 `unique_ptr` 持有——**组合**，生存期归本类。
+- S2. **创建** `NPU` 对象（以 `npuFreqPath`、`npuStatPath` 与 `npuFreqMin`、`npuFreqMax` 构造注入），由 `npu` 持有——同上。
 - S3. **本类不留存四个收窄值**——它们已随 S1 / S2 注入设备对象，**档位收窄由设备的 `readFreqTable` 在装配期完成**（§4.3.4 裁决），故本类无需对应属性。
 - S4. **不在构造期读任何设备节点**——`freqTable` 由首次 `getCPUInfo` / `getNPUInfo` 懒加载；故构造不可失败。
 - S5. 置 `systemInfo` 为零值快照；**不在构造期采样**——缓存由后台 `refreshSystemInfo` 首次刷新；**采样节拍由 `Timer` 承载（§3.5），本类不持间隔属性**。
 
 **`systemManager::~systemManager()`**
-- S1. 删除 `cpu` 与 `npu` 指向的设备对象（**组合，本类是唯一所有者**），两指针置 `nullptr`。
+- S1. 两个 `unique_ptr` 成员随析构自动 delete 其 `CPU` / `NPU` 对象（**组合，本类是唯一所有者**），无需手写删除。
 - S2. 无其他独占资源（`systemInfo` 为值语义成员，随对象自动销毁；**本类不持线程**，无需停止任何循环）。
 
-**`systemManager::askSystemInfo()`**
-- S1. **持 `sysMutex` 读锁**取 `systemInfo` 副本，释放锁后返回（纯读，无采集副作用；缓存由后台 `refreshSystemInfo` 定时刷新）。**不得持锁返回引用**——锁释放后副本仍安全。
+**`systemManager::askSystemInfo(out)`**
+- S1. **持 `sysLock`** 把缓存 `systemInfo` 拷入出参 `out`，锁在作用域结束时释放（纯读，无采集副作用；缓存由后台 `refreshSystemInfo` 定时刷新）。
+- S2. **不返回引用、不置指针**——调用方拿到的是一份独立副本，锁释放后仍安全；本方法不改动 `systemInfo`。
 
 **`systemManager::refreshSystemInfo()`**
-- S1. 调 `npu->getNPUInfo()` 得 `NPUInfo`；调 `cpu->getCPUInfo()` 得 `CPUInfo`（各自读失败兜底，不中断采集）。
-- S2. 组装 `SystemInfo`（含特征分量计算：`ucpu` ← CPU 利用率；`unpu` ← NPU 利用率（0~1，口径同 `NPUInfo`，不设多分量）；`cpuFreqKHz` / `npuFreqKHz` ← 取对应 `info.curFreqKHz`（单位已统一 kHz，无需折算））。
-- S3. 调 `setSystemInfo(info)` 覆盖写缓存（**写锁在该方法内获取**，本步不持锁）；返回 `true`。
-
-**`systemManager::setSystemInfo(info)`**
-- S1. **持 `sysMutex` 写锁**覆盖式写入 `systemInfo`（纯 setter，不采集、不计算）；锁在作用域结束时释放。
+- S1. 前置校验：`cpu` 或 `npu` 为空 → 返回 `false`，缓存保持原值。
+- S2. 调 `npu->getNPUInfo(npuInfo)`、`cpu->getCPUInfo(cpuInfo)`（出参各填一份设备状态；读失败由设备类保留旧值，不中断采集）。
+- S3. 取四个特征分量：`ucpu` ← `cpuInfo.util`；`unpu` ← `npuInfo.util`（0~1，口径同 `NPUInfo`，不设多分量）；`cpuFreqKHz` / `npuFreqKHz` ← 对应 `cpuInfo.curFreqKHz` / `npuInfo.curFreqKHz`（单位已统一 kHz，无需折算）。
+- S4. **持 `sysLock` 覆盖写** `systemInfo` 的四个分量（S2 / S3 均在锁外，锁内只有赋值）；返回 `true`。
 
 **`systemManager::setFreq(freq)`**
 - S1. 读取 `freq` 的目标设备标识。
 - S2. **按设备类型路由**（每条分支**先验设备已创建**，未创建不得解引用）：
-  - S2.1 目标为 CPU：`cpu == nullptr`（设备未创建）→ 返回 `ResultInfo{ok=false, reason=Reason::deviceUnknown, message="unknown device"}`；否则调 `cpu->setFreq(freq)`；
-  - S2.2 目标为 NPU：`npu == nullptr`（设备未创建）→ 返回 `ResultInfo{ok=false, reason=Reason::deviceUnknown, message="unknown device"}`；否则调 `npu->setFreq(freq)`；
-  - S2.3 未知设备类型 → 返回 `ResultInfo{ok=false, reason=Reason::deviceUnknown, message="unknown device"}`（不误投到具体设备）。
+  - S2.1 目标为 CPU：`cpu` 为空 → 返回 `ResultInfo{ok=false, reason=Reason::deviceUnknown, message="unknown device"}`；否则调 `cpu->setFreq(freq)`；
+  - S2.2 目标为 NPU：`npu` 为空 → 返回同上；否则调 `npu->setFreq(freq)`；
+  - S2.3 未知设备类型 → 返回同上（不误投到具体设备）。
 - S3. 原样返回路由目标设备的 `ResultInfo`（本层不改写 `ok` / `message` / `reason`）。
 - S4. **互斥性**：上述分支**至多执行一条**，本方法返回后系统中**恰有一台**设备的频率被改动（失败分支下**零台**被改动）。
 
@@ -722,114 +720,125 @@
 
 | 类 / 属性 / 方法 | 名称 | 类型 / 参数 | 可见性 / 返回 | 初值 / 前置 | — / 后置 | — / 功能说明 |
 |---|---|---|---|---|---|---|
-| 类 | `CPU` | 设备边界类 · System 子系统 | private | — | — | — |
-| 属性 | `freqPath` | `std::string` | private | 构造注入 | — | 频率设备节点路径；默认即生产路径，测试可注入伪 sysfs |
-| 属性 | `statPath` | `std::string` | private | 构造注入（默认宏 `CPU_STAT_PATH`） | — | 状态文件路径（宏 `CPU_STAT_PATH`，即 `/proc/stat`） |
-| 属性 | `freqMin` | `int` | private | 初值 `0`（不限） | — | 档位收窄下限（kHz），构造注入，来源 §4.3.3 `cpu_freq_min`；**`0` 表示不限、不参与比较** |
-| 属性 | `freqMax` | `int` | private | 初值 `0`（不限） | — | 档位收窄上限（kHz），构造注入，来源 §4.3.3 `cpu_freq_max`；**`0` 表示不限、不参与比较** |
-| 属性 | `freqTable` | `std::vector<int>` | private | 初值空 | — | 可用频率表（kHz），首次采集后记住；**已按 `freqMin` / `freqMax` 收窄** |
-| 属性 | `info` | `CPUInfo` | private | 初值 `util = 0`、`curFreqKHz = 0` | — | 设备信息聚合（利用率 + 当前频率 kHz），`getCPUInfo` 返回值的存储本体 |
-| 属性 | `prevTotal` / `prevIdle` | `uint64` | private | 初值 `0` | — | 上次采样的累计 jiffies（差分基准） |
-| 属性 | `hasPrevSample` | `bool` | private | 初值 `false` | — | 是否已有差分基准 |
-| 方法 | `CPU` | `const std::string& freqPath`（频率设备节点路径）、`const std::string& statPath = CPU_STAT_PATH`（统计文件路径，默认宏展开为 `/proc/stat`；二者均可注入伪 sysfs）、`int freqMin = 0`、`int freqMax = 0`（档位收窄上下限，来源 §4.3.3 `cpu_freq_min` / `cpu_freq_max`；`0` 表不限） | 同子系统 → — | 路径非空（为空时用宏定义默认）；`freqMin >= 0`、`freqMax >= 0` | `freqPath` / `statPath` / `freqMin` / `freqMax` 置注入值；`freqTable` 空、`info` 为默认值；`prevTotal` / `prevIdle` = 0、`hasPrevSample = false` | 注入设备节点路径、统计文件路径与档位收窄上下限，并把频率表、设备信息与差分基准置初值；**不在构造期读文件**（`freqTable` 由首次 `getCPUInfo` 懒加载，收窄动作亦在彼时 `readFreqTable` 内完成） |
-| 方法 | `~CPU` | 无 | 同子系统 → — | — | 无资源待还 | **平凡析构**：不持有常开文件句柄（每次读写即时开闭），`freqTable` / `info` 为值语义成员自动销毁 |
-| 方法 | `getCPUInfo` | 无 | 同子系统 → `CPUInfo` | `freqPath` 已注入 | 对外可见状态不变（差分基准与 `freqTable` 属内部采样状态） | 确保频率表已读 → 读状态文件原始累计值 + 读当前频率 → 组装返回 |
-| 方法 | `setFreq` | `const Freq&` | 同子系统 → `ResultInfo` | `freqPath` 已注入 | `info.curFreqKHz` 刷新为回读的真实值；失败保持原值 | 校验目标频率（**越界则夹取到最近合法档位**）→ 确保策略为 `userspace` → 经 `FileService::write` 写频率节点 → 回读**刷新** `info.curFreqKHz`（`ok` 只取写入结果，**不比对读数**，见 D-32）→ 返回 `ResultInfo` |
-| 方法 | `readFreqTable` | 无 | private → `bool` | `freqPath` 已注入 | 填充 `freqTable` | 读可用频率节点 → 解析列表 → 写入 `freqTable` |
+| 类 | `CPU` | 设备边界类 · System 子系统 | private | — | — | 位于继承链末端：`deviceFile` ← `openEulerCPUFile` ← `CPU`；前两层只封装节点布局与解析（**实现层封装类，不计入 §1 的 13 个设计类**），本类只管并发与语义 |
+| 属性 | `freqPath` | `std::string` | protected（继承自 `deviceFile`） | 构造注入 | — | 频率设备节点路径（`freqPath_`）；默认即生产路径，测试可注入伪 sysfs |
+| 属性 | `statPath` | `std::string` | protected（继承自 `deviceFile`） | 构造注入（默认宏 `CPU_STAT_PATH`） | — | 状态文件路径（`statPath_`，宏 `CPU_STAT_PATH` 即 `/proc/stat`） |
+| 属性 | `freqMin` / `freqMax` | `int` | protected（继承自 `deviceFile`） | 初值 `0`（不限） | — | 档位收窄上下限（kHz，`freqMin_` / `freqMax_`），构造注入，来源 §4.3.3 `cpu_freq_min` / `cpu_freq_max`；**`0` 表示该侧不限、不参与比较** |
+| 属性 | `freqTable` | `std::vector<int>` | protected（继承自 `deviceFile`） | 初值空 | — | 可用频率表（kHz，`freqTable_`），首次采集后记住；**已按 `freqMin` / `freqMax` 收窄** |
+| 属性 | `freqNode` | `std::string` | protected（继承自 `openEulerCPUFile`） | 初值 `"scaling_available_frequencies"` | — | 可用频率节点名，供基类 `readFreqTable` 拼接（cpufreq 语义，见 D-17） |
+| 属性 | `prevTotal` / `prevIdle` / `hasPrevSample` | `uint64` / `uint64` / `bool` | protected（继承自 `openEulerCPUFile`） | 初值 `0` / `0` / `false` | — | 上次采样的累计 jiffies 与「是否已有差分基准」（`prevTotal_` / `prevIdle_` / `hasPrevSample_`） |
+| 属性 | `cpuInfo` | `CPUInfo` | private | 初值 `util = 0`、`curFreqKHz = 0` | — | 设备信息聚合（利用率 + 当前频率 kHz，`cpuInfo_`），`getCPUInfo` 出参的来源 |
+| 属性 | `cpuLock` | `std::mutex`（`mutable`） | private | 默认构造 | — | 保护 `cpuInfo_` 与差分基准的跨线程读写；**设备 I/O 一律在锁外** |
+| 方法 | `CPU` | `const std::string& freqPath = CPU_FREQ_PATH`、`const std::string& statPath = CPU_STAT_PATH`、`int freqMin = 0`、`int freqMax = 0`（四者均可注入伪 sysfs） | 同子系统 → — | 路径非空（为空时用宏定义默认）；`freqMin >= 0`、`freqMax >= 0` | 全量转发给 `openEulerCPUFile`：路径与收窄值到位、`freqTable` 空、差分基准归零 | 构造**只做转发赋值、不读任何文件**（故不可失败）；`freqTable` 由首次 `getCPUInfo` / `setFreq` 懒加载 |
+| 方法 | `~CPU` | 无 | 同子系统 → — | — | 无资源待还 | **平凡析构**（定义在 `.cpp`）：不持常开文件句柄，值语义成员自动销毁 |
+| 方法 | `getCPUInfo` | `CPUInfo& out`（出参） | 同子系统 → `void` | `freqPath` 已注入 | `out` 写入本次采样结果；`cpuInfo_` 之外不改对外可见状态 | 调 `refreshInfo()` 采样 → **持 `cpuLock`** 把 `cpuInfo_` 拷入 `out`；**不返回引用**，锁外触碰不到内部状态 |
+| 方法 | `refreshInfo` | 无 | protected → `void`（覆写基类纯虚） | `freqPath` 已注入 | `cpuInfo_` / `freqTable_` / 差分基准就地刷新 | 懒加载频率表 → 读 `/proc/stat` 两帧差分算 `util` → 读 `scaling_cur_freq` 得 `curFreqKHz`；**读失败保留旧值**（见 D-16），首帧 `util` 取占位 0 |
+| 方法 | `setFreq` | `const Freq&` | 同子系统 → `ResultInfo` | `freqPath` 已注入；`freqTable` 可为空（懒加载兜底） | `cpuInfo_.curFreqKHz` 刷新为回读的真实值；失败保持原值 | 懒加载频率表 → 夹取到表内最近档 → 确保策略为 `userspace` → 写 `scaling_setspeed` → 回读**刷新** `cpuInfo_.curFreqKHz`（`ok` 只取写入结果，**不比对读数**，见 D-32）→ 返回 `ResultInfo` |
+| 方法 | `readFreqTable` | `int divisor`（单位折算倍数，CPU 取 `1`）、`LockFn&& withLock`（加锁回调） | protected → `bool`（模板，转发基类同名方法） | `freqPath` 已注入 | 经 `withLock` 写入 `freqTable_` | 读 `freqPath_ + "/" + freqNode` → 按 `divisor` 解析去重升序 → 收窄 → **在 `withLock` 内**写入 `freqTable_`；收窄后为空则退化为整表并返回 `false` |
 
 **算法步骤**
 
 **`CPU::CPU(freqPath, statPath, freqMin, freqMax)`**
-- S1. 把 `freqPath` 与 `statPath` 赋给同名属性（默认取宏定义 `CPU_FREQ_PATH` / `CPU_STAT_PATH`，即生产路径；测试可注入伪 sysfs）。
-- S2. 把 `freqMin` / `freqMax` 赋给同名属性（**均为 `0` 时表示不限、不参与比较**；二者矛盾时按下限优先，由 `readFreqTable` S3 兜底）。
-- S3. 置 `freqTable` 为空、`info` 为默认值。
-- S4. 置差分基准 `prevTotal = 0`、`prevIdle = 0`、`hasPrevSample = false`（**首帧利用率取占位值**，因无差分基准；详见 `getCPUInfo` S3.3）。
-- S5. **不在构造期读任何文件**——频率表由首次 `getCPUInfo` 懒加载，档位收窄亦在彼时进行；故构造不可失败。
+- S1. 把四个实参原样转发给 `openEulerCPUFile` 构造（默认取宏 `CPU_FREQ_PATH` / `CPU_STAT_PATH` 与 `0` / `0`；测试可注入伪 sysfs）。
+- S2. 基类构造只做赋值：`freqPath_` / `statPath_` / `freqMin_` / `freqMax_` 置注入值，`freqTable_` 置空——**本类不留存任何路径与收窄值**。
+- S3. 置差分基准 `prevTotal_ = 0`、`prevIdle_ = 0`、`hasPrevSample_ = false`（**首帧利用率取占位值**，因无差分基准；详见 `refreshInfo` S2.3）。
+- S4. 置 `cpuInfo_` 为默认值。
+- S5. **不在构造期读任何文件**——频率表由首次 `getCPUInfo` / `setFreq` 懒加载，档位收窄亦在彼时进行；故构造不可失败。
 
 **`CPU::~CPU()`**
-- S1. 无动作 —— 无常开文件句柄（每次读写即时开闭），`freqTable` / `info` 为值语义成员自动销毁。
+- S1. 无动作 —— 无常开文件句柄（每次读写即时开闭），`cpuInfo_` / `freqTable_` 为值语义成员自动销毁。
 
-**`CPU::getCPUInfo()`**
-- S1. 若 `freqTable` 为空 → 调 `readFreqTable()` 确保频率表已读；失败不阻断（`freqTable` 保持空，后续校验会兜底）。
-- S2. 读 `/proc/stat` 首行（`cpu` 汇总行）得累计 `total` 与 `idle` jiffies。
-- S3. **利用率差分计算**：
-  - S3.1 若 `hasPrevSample == true`：`dTotal = total - prevTotal`、`dIdle = idle - prevIdle`；
-  - S3.2 `util = (dTotal > 0) ? (1 - dIdle / dTotal) : 0`（除零保护）；
-  - S3.3 若 `hasPrevSample == false`（首次）→ `util = 0`（无基准无法算差分）。
-- S4. 更新差分基准：`prevTotal = total`、`prevIdle = idle`、`hasPrevSample = true`。
-- S5. 读当前频率节点写入 `info.curFreqKHz`。
-- S6. 组装 `CPUInfo`（利用率、当前频率）返回；本方法自身不改变对外可见状态（基准更新属内部采样所需）。
+**`CPU::getCPUInfo(out)`**
+- S1. 调 `refreshInfo()` 完成一次采样（内部含懒加载、两帧差分与频率读取；失败不阻断）。
+- S2. **持 `cpuLock`** 把 `cpuInfo_` 拷入出参 `out`，锁在作用域结束时释放。**不返回引用**——`out` 是独立副本，锁外无法借它改写内部状态。
+
+**`CPU::refreshInfo()`**
+- S1. 若 `freqTable_` 为空 → 调 `readFreqTable(1, withCPULock)` 确保频率表已读；失败不阻断（表保持空，后续校验兜底）。
+- S2. 读 `statPath_`（`/proc/stat`）首行汇总行得累计 `total` 与 `idle` jiffies；**读失败则不触碰 `util`，保留上一拍的值**。
+- S2.1 若 `hasPrevSample_ == true`：`dTotal = total - prevTotal_`、`dIdle = idle - prevIdle_`；
+- S2.2 `util = (dTotal > 0) ? (1 - dIdle / dTotal) : 0`（除零保护）；
+- S2.3 若 `hasPrevSample_ == false`（首次）→ `util` 保持初值 0（无基准无法算差分）；
+- S2.4 更新差分基准 `prevTotal_ = total`、`prevIdle_ = idle`、`hasPrevSample_ = true`——基准的「读」与「写」同在一把锁内，否则两个线程会拿同一份基准重复差分。
+- S3. 读 `freqPath_ + "/scaling_cur_freq"`（原生 kHz，不折算，见 D-18）写入 `cpuInfo_.curFreqKHz`；**读失败保留旧值**。
 
 **`CPU::setFreq(freq)`**
-- S1. **可承载性判定**：`freqTable` 为空 → 返回 `ResultInfo{ok=false, reason=Reason::freqUnavailable, message="freq table unavailable"}`；`freqKHz` 不在表内 → **夹取**到最近合法档位（越界按 UC3 异常流处理，**不判失败**）。
-- S2. **调频策略就绪检查**：读 `freqPath + "/scaling_governor"`，非 `userspace` 则写入 `userspace`；每次设频前检查、不缓存结果。**切换失败 → 返回 `ResultInfo{ok=false, reason=Reason::writeFailed, message="governor switch failed"}`，不写频率**（非 `userspace` 下内核拒写 `scaling_setspeed`，硬写只会回读到旧值）。
-- S3. 经 `FileService::write` 写频率节点；失败 → 返回 `ResultInfo{ok=false, reason=Reason::writeFailed, message=...}`，`info.curFreqKHz` 保持原值。
-- S4. **回读刷新真实值**：读回频率节点写入 `info.curFreqKHz`（读失败则保留写入前的值）；**回读值不与目标值比对、不作成败判据**（见 D-32）——`ok` 只取 S3 写入系统调用的结果；返回 `ResultInfo{ok=true, reason=Reason::none}`。
+- S1. **可承载性判定**：`freqTable_` 为空 → 先懒加载一次；仍为空 → 返回 `ResultInfo{ok=false, reason=Reason::freqUnavailable, message="freq table unavailable"}`；`freqKHz` 不在表内 → **夹取**到最近合法档位（等距取较小档；越界按 UC3 异常流处理，**不判失败**）。
+- S2. **调频策略就绪检查**：读 `freqPath_ + "/scaling_governor"`，非 `userspace` 则写入 `userspace`；每次设频前检查、不缓存结果。**切换失败 → 返回 `ResultInfo{ok=false, reason=Reason::writeFailed, message="governor switch failed"}`，不写频率**（非 `userspace` 下内核拒写 `scaling_setspeed`，硬写只会回读到旧值）。
+- S3. 经 `FileService::write` 写 `scaling_setspeed`；失败 → 返回 `ResultInfo{ok=false, reason=Reason::writeFailed, message=...}`，`cpuInfo_.curFreqKHz` 保持原值。
+- S4. **回读刷新真实值**：读回 `scaling_cur_freq` 写入 `cpuInfo_.curFreqKHz`（读失败则保留写入前的值）；**回读值不与目标值比对、不作成败判据**（见 D-32）——`ok` 只取 S3 写入系统调用的结果；返回 `ResultInfo{ok=true, reason=Reason::none}`。
 
-**`CPU::readFreqTable()`**
-- S1. 经 `FileService::read` 读可用频率节点；读失败或为空 → 返回 `false`。
-- S2. 解析节点内容（空白 / 逗号分隔）为整数数组 `raw`，**去重并按升序排列**——`setFreq` 的"最近合法档位"夹取依赖表有序，而内核节点不保证有序。
-- S3. **档位收窄**（§4.3.3 `cpu_freq_min` / `cpu_freq_max`，已由构造注入 `freqMin` / `freqMax`）：剔出 `< freqMin` 的项（`freqMin == 0` 则不作下限过滤）与 `> freqMax` 的项（`freqMax == 0` 则不作上限过滤）；**收窄仅在此装配期执行，而非另设一张限制表**，故后续 `setFreq` 的越界夹取自然落进允许区间。
-- S3.1 收窄后为空 → **保留 `raw` 原表**并返回 `false`（不计为配置错误，与 §4.3.4 约定一致）；此时 `freqTable` 写入 `raw`。
-- S4. 收窄结果非空 → 写入 `freqTable`；返回 `true`。
+**`CPU::readFreqTable(divisor, withLock)`**
+- S1. 经 `FileService::read` 读 `freqPath_ + "/" + freqNode`（CPU 侧 `freqNode` 为 `scaling_available_frequencies`）；读失败或内容为空 → 返回 `false`，`freqTable_` 保持原状。
+- S2. 解析节点内容（空白 / 逗号分隔）为整数数组，按 `divisor` 折算（CPU 取 `1`，原生即 kHz），**去重并按升序排列**——`setFreq` 的「最近合法档位」夹取依赖表有序，而内核节点不保证有序。
+- S3. **档位收窄**（§4.3.3 `cpu_freq_min` / `cpu_freq_max`，已由构造注入 `freqMin_` / `freqMax_`）：剔出 `< freqMin_` 的项（`freqMin_ == 0` 则不作下限过滤）与 `> freqMax_` 的项（`freqMax_ == 0` 则不作上限过滤）；**收窄仅在此装配期执行，而非另设一张限制表**，故后续 `setFreq` 的越界夹取自然落进允许区间。
+- S3.1 收窄后为空（含 `freqMin_ > freqMax_` 的矛盾配置——两侧条件同时生效、整表被剔空）→ **保留未收窄的整表**并返回 `false`（不计为配置错误，与 §4.3.4 约定一致）。
+- S4. 收窄结果非空 → 写入 `freqTable_`；返回 `true`。
+- S5. 写入动作经 `withLock` 回调完成——本方法**自身不持锁**，锁的归属由调用方（`refreshInfo` / `setFreq`）决定。
 
 > **【D-17｜提示】CPU 节点命名（实现层提示）**：CPU 侧频率节点名须用 **cpufreq** 语义（`scaling_available_frequencies` / `scaling_cur_freq` / `scaling_setspeed`），**不可沿用 devfreq 命名**；`scaling_setspeed` 直接位于 policy 目录下，无 `userspace/` 子目录。NPU 侧为 devfreq 挂点，命名不同。
 
-> **【D-18｜提示】CPU 频率单位**：本类对外**统一 kHz**，而 CPU 侧 sysfs 为 **cpufreq** 语义，`scaling_available_frequencies` / `scaling_cur_freq` / `scaling_setspeed` 节点**原生即为 kHz**——与设计层同单位，**读入可直接解析为 `freqTable` / `info.curFreqKHz`，`freqKHz` 亦可直接写入，无须任何折算**（**不要**做 ×1000 处理）。
+> **【D-18｜提示】CPU 频率单位**：本类对外**统一 kHz**，而 CPU 侧 sysfs 为 **cpufreq** 语义，`scaling_available_frequencies` / `scaling_cur_freq` / `scaling_setspeed` 节点**原生即为 kHz**——与设计层同单位，**读入可直接解析为 `freqTable` / `cpuInfo_.curFreqKHz`，`freqKHz` 亦可直接写入，无须任何折算**（**不要**做 ×1000 处理）。
 
-> **【D-32｜裁决】回读不作成败判据**：`setFreq` 的 `ok` **只取写入系统调用的结果**，回读频率节点仅用于把 `info.curFreqKHz` 刷成设备**真实值**，**不与目标值比对**。三条理由：① `scaling_cur_freq` 相对 `scaling_setspeed` 存在驱动 / 固件滞后，写完立即回读常仍是旧值，比对会把成功判成失败，进而误增 `failCount`、误触发降级；② 内核可能因 thermal / policy 在允许档位间自行跳变，回读值不等于目标值**未必是失败**；③ 热路径上重试比对要多次文件 I/O，延迟不可控。**生效性由下一拍观察**：`refreshSystemInfo` 在 `Timer::intervalMs`（默认 500 ms）后读到的 `cpuFreqKHz` / `npuFreqKHz` 即设备真实状态；若长期与目标不符，属 `governor` 被外部改回或驱动拒绝，按「动作无效果」**记日志告警、由运维发现；中间件不做闭环校正**（重试调频会引出「调频—滞后—再调」的震荡），也**不在本层误报**。`CPU` 与 `NPU` 同此口径。
+> **【D-32｜裁决】回读不作成败判据**：`setFreq` 的 `ok` **只取写入系统调用的结果**，回读频率节点仅用于把 `cpuInfo_.curFreqKHz` / `npuInfo_.curFreqKHz` 刷成设备**真实值**，**不与目标值比对**。三条理由：① `scaling_cur_freq` 相对 `scaling_setspeed` 存在驱动 / 固件滞后，写完立即回读常仍是旧值，比对会把成功判成失败，进而误增 `failCount`、误触发降级；② 内核可能因 thermal / policy 在允许档位间自行跳变，回读值不等于目标值**未必是失败**；③ 热路径上重试比对要多次文件 I/O，延迟不可控。**生效性由下一拍观察**：`refreshSystemInfo` 在 `Timer::intervalMs`（默认 500 ms）后读到的 `cpuFreqKHz` / `npuFreqKHz` 即设备真实状态；若长期与目标不符，属 `governor` 被外部改回或驱动拒绝，按「动作无效果」**记日志告警、由运维发现；中间件不做闭环校正**（重试调频会引出「调频—滞后—再调」的震荡），也**不在本层误报**。`CPU` 与 `NPU` 同此口径。
 
 ### 3.13 `NPU`（boundary · System · private）
 
 | 类 / 属性 / 方法 | 名称 | 类型 / 参数 | 可见性 / 返回 | 初值 / 前置 | — / 后置 | — / 功能说明 |
 |---|---|---|---|---|---|---|
-| 类 | `NPU` | 设备边界类 · System 子系统 | private | — | — | — |
-| 属性 | `npuPath` | `std::string` | private | 构造注入 | — | 设备节点路径（devfreq 挂点），测试可注入伪 sysfs |
-| 属性 | `freqMin` | `int` | private | 初值 `0`（不限） | — | 档位收窄下限（kHz），构造注入，来源 §4.3.3 `npu_freq_min`；**`0` 表示不限、不参与比较** |
-| 属性 | `freqMax` | `int` | private | 初值 `0`（不限） | — | 档位收窄上限（kHz），构造注入，来源 §4.3.3 `npu_freq_max`；**`0` 表示不限、不参与比较** |
-| 属性 | `freqTable` | `std::vector<int>` | private | 初值空 | — | 可用频率表（kHz），首次采集后记住；**已按 `freqMin` / `freqMax` 收窄** |
-| 属性 | `info` | `NPUInfo` | private | 初值 `util = 0`、`curFreqKHz = 0` | — | 设备信息聚合（利用率 + 当前频率 kHz），`getNPUInfo` 返回值的存储本体 |
-| 方法 | `NPU` | `const std::string& npuPath`（devfreq 挂点路径，可注入伪 sysfs）、`int freqMin = 0`、`int freqMax = 0`（档位收窄上下限，来源 §4.3.3 `npu_freq_min` / `npu_freq_max`；`0` 表不限） | 同子系统 → — | 路径非空（为空时用宏定义默认 `NPU_PATH`）；`freqMin >= 0`、`freqMax >= 0` | `npuPath` / `freqMin` / `freqMax` 置注入值；`freqTable` 空、`info` 为默认值 | 注入 devfreq 设备节点路径与档位收窄上下限，并把频率表与设备信息置初值；**不在构造期读文件**，且不读 procfs——NPU 不持差分基准（利用率**单帧即得**，直接取 `load` 节点） |
+| 类 | `NPU` | 设备边界类 · System 子系统 | private | — | — | 位于继承链末端：`deviceFile` ← `NPUFile` ← `NPU`；前两层只封装 devfreq 节点布局与解析（**实现层封装类，不计入 §1 的 13 个设计类**），本类只管并发与语义 |
+| 属性 | `freqPath` | `std::string` | protected（继承自 `deviceFile`） | 构造注入 | — | 频率设备节点路径（devfreq 挂点，`freqPath_`），测试可注入伪 sysfs |
+| 属性 | `statPath` | `std::string` | protected（继承自 `deviceFile`） | 构造注入（默认宏 `NPU_STAT_PATH`） | — | 状态节点路径（`statPath_`），**仅用于读 `load`**：异形设备可与频率挂点不同目录，且**不随 `npuFreqPath` 联动** |
+| 属性 | `freqMin` / `freqMax` | `int` | protected（继承自 `deviceFile`） | 初值 `0`（不限） | — | 档位收窄上下限（kHz，`freqMin_` / `freqMax_`），构造注入，来源 §4.3.3 `npu_freq_min` / `npu_freq_max`；**`0` 表示该侧不限、不参与比较** |
+| 属性 | `freqTable` | `std::vector<int>` | protected（继承自 `deviceFile`） | 初值空 | — | 可用频率表（kHz，`freqTable_`），首次采集后记住；**已按 `freqMin` / `freqMax` 收窄** |
+| 属性 | `freqNode` | `std::string` | protected（继承自 `NPUFile`） | 初值 `"available_frequencies"` | — | 可用频率节点名，供基类 `readFreqTable` 拼接（devfreq 语义） |
+| 属性 | `npuInfo` | `NPUInfo` | private | 初值 `util = 0`、`curFreqKHz = 0` | — | 设备信息聚合（利用率 + 当前频率 kHz，`npuInfo_`），`getNPUInfo` 出参的来源 |
+| 属性 | `npuLock` | `std::mutex`（`mutable`） | private | 默认构造 | — | 保护 `npuInfo_` 的跨线程读写；**设备 I/O 一律在锁外** |
+| 方法 | `NPU` | `const std::string& freqPath = NPU_FREQ_PATH`、`const std::string& statPath = NPU_STAT_PATH`、`int freqMin = 0`、`int freqMax = 0`（四者均可注入伪 sysfs） | 同子系统 → — | 路径非空（为空时用宏定义默认）；`freqMin >= 0`、`freqMax >= 0` | 全量转发给 `NPUFile`：路径与收窄值到位、`freqTable` 空、`npuInfo` 为默认值 | 构造**只做转发赋值、不读任何文件**（故不可失败）；不读 procfs——NPU 不持差分基准（利用率**单帧即得**） |
 | 方法 | `~NPU` | 无 | 同子系统 → — | — | 无资源待还 | **平凡析构**：同 `CPU`；devfreq 节点的生命期归属于驱动而非本对象 |
-| 方法 | `getNPUInfo` | 无 | 同子系统 → `NPUInfo` | `npuPath` 已注入 | 对外可见状态不变（`freqTable` 属内部采样状态） | 确保频率表已读 → 读当前频率 → 读 `load` 节点得利用率 → 组装返回；**利用率取 devfreq `load`**（0~100，归一到 `[0, 1]`，**读失败填 0**），不做 `/proc/stat` 差分 |
-| 方法 | `setFreq` | `const Freq&` | 同子系统 → `ResultInfo` | `npuPath` 已注入 | `info.curFreqKHz` 刷新为回读的真实值；失败保持原值 | 校验目标频率（**越界则夹取到最近合法档位**）→ 确保策略为 `userspace` → 经 `FileService::write` 写频率节点 → 回读**刷新** `info.curFreqKHz`（`ok` 只取写入结果，**不比对读数**，见 D-32）→ 返回 `ResultInfo` |
-| 方法 | `readFreqTable` | 无 | private → `bool` | `npuPath` 已注入 | 填充 `freqTable` | 读可用频率节点 → 解析列表 → 写入 `freqTable` |
+| 方法 | `getNPUInfo` | `NPUInfo& out`（出参） | 同子系统 → `void` | `freqPath` 已注入 | `out` 写入本次采样结果；`npuInfo_` 之外不改对外可见状态 | 调 `refreshInfo()` 采样 → **持 `npuLock`** 把 `npuInfo_` 拷入 `out`；**不返回引用**，锁外触碰不到内部状态 |
+| 方法 | `refreshInfo` | 无 | protected → `void`（覆写基类纯虚） | `freqPath` 已注入 | `npuInfo_` / `freqTable_` 就地刷新 | 懒加载频率表 → 读 `cur_freq`（Hz ÷1000 折 kHz，D-21）→ 读 `statPath_ + "/load"`（0~100 → `[0,1]`，夹取到界内）；**读失败保留旧值**（见 D-16） |
+| 方法 | `setFreq` | `const Freq&` | 同子系统 → `ResultInfo` | `freqPath` 已注入；`freqTable` 可为空（懒加载兜底） | `npuInfo_.curFreqKHz` 刷新为回读的真实值；失败保持原值 | 懒加载频率表 → 夹取到表内最近档 → 确保策略为 `userspace` → 写 `userspace/set_freq`（×1000 折 Hz，D-21）→ 回读**刷新** `npuInfo_.curFreqKHz`（`ok` 只取写入结果，**不比对读数**，见 D-32）→ 返回 `ResultInfo` |
+| 方法 | `readFreqTable` | `int divisor`（单位折算倍数，NPU 取 `1000`）、`LockFn&& withLock`（加锁回调） | protected → `bool`（模板，转发基类同名方法） | `freqPath` 已注入 | 经 `withLock` 写入 `freqTable_` | 读 `freqPath_ + "/" + freqNode` → 按 `divisor` 解析去重升序 → 收窄 → **在 `withLock` 内**写入 `freqTable_`；收窄后为空则退化为整表并返回 `false` |
 
 > **【D-19｜说明】`CPU` / `NPU` 同构**：`CPU` 与 `NPU` 两类**方法集合同构**（`getCPUInfo` ↔ `getNPUInfo`、`setFreq`、`readFreqTable`），**属性差异**：`CPU` 多出 `statPath` / `prevTotal` / `prevIdle` / `hasPrevSample`（用于读 `/proc/stat` 差分算利用率）；NPU 无 procfs，故无此四项。设备节点语义亦不同（CPU 为 cpufreq 挂点、NPU 为 devfreq 挂点）。**利用率算法亦不同**：CPU 读 `/proc/stat` 累计值需**两帧差分**（故持 `prevTotal` / `prevIdle` / `hasPrevSample`，首帧利用率为占位值），NPU 读 `load` 节点**单帧即得**（故无差分基准四项，亦无首帧占位问题）。
 
 **算法步骤**
 
-**`NPU::NPU(npuPath, freqMin, freqMax)`**
-- S1. 把 `npuPath` 赋给同名属性（为空则用宏定义默认 `NPU_PATH`；测试可注入伪 sysfs）。
-- S2. 把 `freqMin` / `freqMax` 赋给同名属性（**均为 `0` 时表示不限、不参与比较**；矛盾时按下限优先，由 `readFreqTable` S3 兜底）。
-- S3. 置 `freqTable` 为空、`info` 为默认值；**不置差分基准**——NPU 无 procfs，利用率单帧即得（对比 `CPU` 构造 S4）。
-- S4. **不在构造期读任何文件**——频率表由首次 `getNPUInfo` 懒加载，收窄亦在彼时进行；故构造不可失败。
+**`NPU::NPU(freqPath, statPath, freqMin, freqMax)`**
+- S1. 把四个实参原样转发给 `NPUFile` 构造（默认取宏 `NPU_FREQ_PATH` / `NPU_STAT_PATH` 与 `0` / `0`；测试可注入伪 sysfs）。
+- S2. 基类构造只做赋值：`freqPath_` / `statPath_` / `freqMin_` / `freqMax_` 置注入值，`freqTable_` 置空。
+- S3. 置 `npuInfo_` 为默认值；**不置差分基准**——NPU 无 procfs，利用率单帧即得（对比 `CPU` 构造 S3）。
+- S4. **不在构造期读任何文件**——频率表由首次 `getNPUInfo` / `setFreq` 懒加载，收窄亦在彼时进行；故构造不可失败。
 
 **`NPU::~NPU()`**
 - S1. 无动作 —— 同 `CPU`；且无差分基准需清理。
 
-**`NPU::getNPUInfo()`**
-- S1. 若 `freqTable` 为空 → 调 `readFreqTable()`；失败不阻断。
-- S2. 读当前频率节点（`npuPath + "/cur_freq"`）写入 `info.curFreqKHz`。
-- S3. **读利用率节点** `npuPath + "/load"`（0~100）：`util = 读值 / 100`，夹取到 `[0, 1]`；**读失败或内容不可解析 → `util = 0`**（该节点由驱动可选导出，缺失不应中断采集）。**NPU 无 procfs，故不做差分**——利用率单帧即得，**不存在 `CPU::getCPUInfo` S3.3 的首帧占位问题**。
-- S4. 组装 `NPUInfo`（利用率、当前频率）返回。
+**`NPU::getNPUInfo(out)`**
+- S1. 调 `refreshInfo()` 完成一次采样（内部含懒加载、频率读取与 `load` 读取；失败不阻断）。
+- S2. **持 `npuLock`** 把 `npuInfo_` 拷入出参 `out`，锁在作用域结束时释放。**不返回引用**——`out` 是独立副本。
+
+**`NPU::refreshInfo()`**
+- S1. 若 `freqTable_` 为空 → 调 `readFreqTable(1000, withNPULock)`；失败不阻断。
+- S2. 读 `freqPath_ + "/cur_freq"`（原生 Hz → ÷1000，D-21）写入 `npuInfo_.curFreqKHz`；**读失败保留旧值**。
+- S3. **读利用率节点** `statPath_ + "/load"`（0~100）：`util = 读值 / 100`，夹取到 `[0, 1]`；**读失败或内容不可解析 → 不写 `util`、保留旧值**（该节点由驱动可选导出，缺失不应中断采集）。**NPU 无 procfs，故不做差分**——利用率单帧即得，**不存在 `CPU::refreshInfo` S2.3 的首帧占位问题**。
 
 **`NPU::setFreq(freq)`**
-- S1. **可承载性判定**：`freqTable` 为空 → 返回 `ResultInfo{ok=false, reason=Reason::freqUnavailable, message="freq table unavailable"}`；`freqKHz` 不在表内 → **夹取**到最近合法档位（越界按 UC3 异常流处理，**不判失败**）。
-- S2. **调频策略就绪检查**：读 `npuPath + "/governor"`，非 `userspace` 则写入 `userspace`；每次设频前检查、不缓存结果。**切换失败 → 返回 `ResultInfo{ok=false, reason=Reason::writeFailed, message="governor switch failed"}`，不写频率**（仅 `userspace` 允许写 `userspace/set_freq`）。
-- S3. 经 `FileService::write` 写 `userspace/set_freq`（写出前 ×1000 折成 Hz，见 D-21）；失败 → 返回 `ResultInfo{ok=false, reason=Reason::writeFailed, message=...}`，`info.curFreqKHz` 保持原值。
-- S4. **回读刷新真实值**：读回频率节点写入 `info.curFreqKHz`（读失败则保留写入前的值）；**回读值不与目标值比对、不作成败判据**（见 D-32）——`ok` 只取 S3 写入系统调用的结果；返回 `ResultInfo{ok=true, reason=Reason::none}`。
+- S1. **可承载性判定**：`freqTable_` 为空 → 先懒加载一次；仍为空 → 返回 `ResultInfo{ok=false, reason=Reason::freqUnavailable, message="freq table unavailable"}`；`freqKHz` 不在表内 → **夹取**到最近合法档位（等距取较小档；越界按 UC3 异常流处理，**不判失败**）。
+- S2. **调频策略就绪检查**：读 `freqPath_ + "/governor"`，非 `userspace` 则写入 `userspace`；每次设频前检查、不缓存结果。**切换失败 → 返回 `ResultInfo{ok=false, reason=Reason::writeFailed, message="governor switch failed"}`，不写频率**（仅 `userspace` 允许写 `userspace/set_freq`）。
+- S3. 经 `FileService::write` 写 `userspace/set_freq`（写出前 ×1000 折成 Hz，见 D-21）；失败 → 返回 `ResultInfo{ok=false, reason=Reason::writeFailed, message=...}`，`npuInfo_.curFreqKHz` 保持原值。
+- S4. **回读刷新真实值**：读回 `cur_freq` 写入 `npuInfo_.curFreqKHz`（读失败则保留写入前的值）；**回读值不与目标值比对、不作成败判据**（见 D-32）——`ok` 只取 S3 写入系统调用的结果；返回 `ResultInfo{ok=true, reason=Reason::none}`。
 
-**`NPU::readFreqTable()`**
-- S1. 经 `FileService::read` 读可用频率节点（devfreq 挂点）；读失败或为空 → 返回 `false`。
-- S2. 解析节点内容（空白 / 逗号分隔）为整数数组 `raw`，**去重并按升序排列**——`setFreq` 的"最近合法档位"夹取依赖表有序，而内核节点不保证有序。
-- S3. **档位收窄**（§4.3.3 `npu_freq_min` / `npu_freq_max`，已由构造注入 `freqMin` / `freqMax`）：剔出 `< freqMin` 的项（`freqMin == 0` 则不作下限过滤）与 `> freqMax` 的项（`freqMax == 0` 则不作上限过滤）；**收窄仅在此装配期执行，而非另设一张限制表**。
-- S3.1 收窄后为空 → **保留 `raw` 原表**并返回 `false`（不计为配置错误）；此时 `freqTable` 写入 `raw`。
-- S4. 收窄结果非空 → 写入 `freqTable`；返回 `true`。
+**`NPU::readFreqTable(divisor, withLock)`**
+- S1. 经 `FileService::read` 读 `freqPath_ + "/" + freqNode`（NPU 侧 `freqNode` 为 `available_frequencies`，devfreq 挂点）；读失败或内容为空 → 返回 `false`。
+- S2. 解析为整数数组，按 `divisor`（NPU 取 `1000`，Hz → kHz）折算，**去重并按升序排列**。
+- S3. **档位收窄**（§4.3.3 `npu_freq_min` / `npu_freq_max`，已注入 `freqMin_` / `freqMax_`）：剔出 `< freqMin_` 与 `> freqMax_` 的项（该侧为 `0` 则不作过滤）；**收窄仅在此装配期执行，而非另设一张限制表**。
+- S3.1 收窄后为空（含 `freqMin_ > freqMax_` 的矛盾配置）→ **保留未收窄的整表**并返回 `false`（不计为配置错误）。
+- S4. 收窄结果非空 → 写入 `freqTable_`；返回 `true`。
+- S5. 写入动作经 `withLock` 回调完成——本方法**自身不持锁**。
 
 > **【D-20｜说明】`NPU` 与 `CPU` 差异**：`NPU` 的 `getNPUInfo` **不做** `/proc/stat` 差分（无 procfs）；其余两个方法（`setFreq` / `readFreqTable`）算法与 `CPU` **完全同构**，仅设备节点路径不同。
 
-> **【D-21｜提示】NPU 频率单位**：本类对外**统一 kHz**，而 NPU 侧为 **devfreq** 挂点，`available_frequencies` / `cur_freq` / `userspace/set_freq` 节点**原生单位为 Hz**——**系统调用（写节点）的参数必须按 Hz 给出**，故写节点前**须 ×1000**、读入后**须 ÷1000** 折算回设计层 kHz（`freqTable` / `info.curFreqKHz` 及 `freqMin` / `freqMax` 的收窄比较**一律在 kHz 上进行**）。**漏折算会使 `freqTable` 被 kHz 量级的上下限整表剔空。**
+> **【D-21｜提示】NPU 频率单位**：本类对外**统一 kHz**，而 NPU 侧为 **devfreq** 挂点，`available_frequencies` / `cur_freq` / `userspace/set_freq` 节点**原生单位为 Hz**——**系统调用（写节点）的参数必须按 Hz 给出**，故写节点前**须 ×1000**、读入后**须 ÷1000** 折算回设计层 kHz（`freqTable` / `npuInfo_.curFreqKHz` 及 `freqMin` / `freqMax` 的收窄比较**一律在 kHz 上进行**）。**漏折算会使 `freqTable` 被 kHz 量级的上下限整表剔空。**
 
 ### 3.14 设计类图与类间关系
 
@@ -920,7 +929,7 @@
 
 采用 INI 风格，由配置加载器解析，启动时读取一次。
 
-> **【D-22｜裁决】路径一律宏定义**：配置文件路径由 `#define CONFIG_PATH "/etc/schedd/schedd.conf"` 给出（与 `MODEL_DIR` / `CPU_FREQ_PATH` / `NPU_PATH` / `CPU_STAT_PATH` 同置公共头文件、全项目唯一出处；预处理期字面量替换，**不是变量也不是常量对象**）。命令行 `--config <路径>` 可覆盖宏值，覆盖后不再使用宏。
+> **【D-22｜裁决】路径一律宏定义**：配置文件路径由 `#define CONFIG_PATH "/etc/schedd/schedd.conf"` 给出（与 `MODEL_DIR` / `CPU_FREQ_PATH` / `NPU_FREQ_PATH` / `NPU_STAT_PATH` / `CPU_STAT_PATH` 同置公共头文件、全项目唯一出处；预处理期字面量替换，**不是变量也不是常量对象**）。命令行 `--config <路径>` 可覆盖宏值，覆盖后不再使用宏。
 
 > **【D-23｜裁决】装配归属与生命周期**：启动装配入口（`main()`，**不属于 §1 的 13 个设计类、不进 §3.14 的边**）依次执行：创建 `ConfigFile` → `configValidate(配置路径)` → `getConfig(配置路径)` → 逐键取值（`getString` / `getInt` / `has`）→ 拼出模型完整路径 → 构造注入 `serviceInterface` / `systemManager` / `decisionMaker` → 调 `Timer::start(sample_interval_ms, …)` 装载监控节拍（回调内容为 `systemManager::refreshSystemInfo()`，见 §3.5）。**校验失败或单个键缺失一律取默认值、不阻塞启动**，由降级链兜底；`ConfigFile` **生命周期止于装配期**，取键后即销毁，不进运行期对象图。逐类的构造拓扑序（14 步）与两条时序约束见 **§6.1**。
 
@@ -950,15 +959,16 @@
 | `npu_freq_min` | int | 0（不限） | NPU 档位收窄下限（kHz） | `systemManager`（配置入口） | → `NPU::freqMin` |
 | `npu_freq_max` | int | 0（不限） | NPU 档位收窄上限（kHz） | `systemManager`（配置入口） | → `NPU::freqMax` |
 | `cpu_freq_path` | string | 空（用宏 `CPU_FREQ_PATH`） | CPU 频率设备节点路径 | `systemManager` | → `CPU::freqPath` |
-| `npu_freq_path` | string | 空（用宏 `NPU_PATH`） | NPU devfreq 节点路径 | `systemManager` | → `NPU::npuPath` |
+| `npu_freq_path` | string | 空（用宏 `NPU_FREQ_PATH`） | NPU devfreq 频率挂点路径 | `systemManager` | → `NPU::freqPath` |
+| `npu_stat_path` | string | 空（用宏 `NPU_STAT_PATH`） | NPU 状态节点路径（**仅用于读 `load`**，与频率挂点相互独立、不随 `npu_freq_path` 联动） | `systemManager`（配置入口） | → `NPU::statPath` |
 | `proc_stat_path` | string | 空（用宏 `CPU_STAT_PATH`，即 `/proc/stat`） | CPU 统计文件路径 | `systemManager`（配置入口） | → `CPU::statPath` |
 | `sample_interval_ms` | int | 500 | 采样间隔（毫秒）；非正值回退 500 | `Timer::intervalMs`（装配层经 `Timer::start` 传入） | 监控线程循环调 `Timer::poll()` 判到期 |
 
-**三个路径键的默认值同样以宏给出**：`CPU_FREQ_PATH`、`NPU_PATH`、`CPU_STAT_PATH` 均为 `#define` 定义，与 `MODEL_DIR` 同置于公共头文件、全项目唯一出处；预处理期字面量替换，**不是变量也不是常量对象**，不占存储、无地址、运行期不可改写。配置留空即取宏展开值，非空则用注入值覆盖（测试可注入伪 sysfs）。
+**四个路径键的默认值同样以宏给出**：`CPU_FREQ_PATH`、`NPU_FREQ_PATH`、`NPU_STAT_PATH`、`CPU_STAT_PATH` 均为 `#define` 定义，与 `MODEL_DIR` 同置于公共头文件、全项目唯一出处；预处理期字面量替换，**不是变量也不是常量对象**，不占存储、无地址、运行期不可改写。配置留空即取宏展开值，非空则用注入值覆盖（测试可注入伪 sysfs）。
 
 #### 4.3.4 配置解析约定
 
-**未配置与配置为空值需明确区分。** 整型项遇留空或非法字面量一律返回默认值，四个频率上下限与三个路径项正是靠这一点表达未配置；`model_file` 留空则表达「无模型」，按停用处理。另有 `has(section, key)` 用于判断键是否存在。
+**未配置与配置为空值需明确区分。** 整型项遇留空或非法字面量一律返回默认值，四个频率上下限与四个路径项正是靠这一点表达未配置；`model_file` 留空则表达「无模型」，按停用处理。另有 `has(section, key)` 用于判断键是否存在。
 
 **四个频率上下限的作用方式**为：装配期收窄设备档位表，而非另设限制表；随后所有档位夹取自然落进允许区间。过滤后档位表为空则保留原表并返回失败，不计为配置错误。
 
@@ -1248,14 +1258,14 @@
 | D-12 | 裁决 | Agent → System 通道唯一 | 出口**唯一**即 `systemMonitor`；`decisionExecutor` 持 `monitor` 关联，不直连 `systemInterface` / `CPU` / `NPU` | §3.9 |
 | D-13 | 裁决 | 单次语义（CPU / NPU 二选一） | 一次决策只在**一台**处理器上设**一次**频率；`Decision` 承载唯一 `Freq`，`ActionInfo` 退化为「一条动作 + 一个结果」 | §3.9 |
 | D-14 | 约定 | `Freq` 语义 | 设计层动作类型，承载「**目标设备标识 + 目标频率（kHz）**」；`systemManager::setFreq` 据标识路由，设备类在 `setFreq` 内直接物理写 | §3.11 |
-| D-15 | 约定 | 系统状态类型划分 | `SystemInfo`（系统级）/ `CPUInfo` / `NPUInfo`（设备级）**三类并列、无继承**；`SystemStateSnapshot` 不属状态类型（字段为 `{system, model}`） | §3.11 |
-| D-16 | 约定 | 有效性不设字段 | 有效性由定时刷新保证（陈旧度 ≤ `Timer::intervalMs`）；三类状态类型**均无 `valid` 字段**，读失败零值兜底、不回退旧快照 | §3.11 |
+| D-15 | 约定 | 系统状态类型划分 | `SystemInfo`（系统级）与 `CPUInfo` / `NPUInfo`（设备级）**互不包含、互不继承**；`SystemInfo` 只承载四分量 `ucpu` / `unpu` / `cpuFreqKHz` / `npuFreqKHz`，不嵌入设备状态；`CPUInfo` / `NPUInfo` 共用 `deviceInfo` 字段载体（非设计类）；`SystemStateSnapshot` 不属状态类型（字段为 `{system, model}`） | §3.11 |
+| D-16 | 约定 | 有效性不设字段 | 有效性由定时刷新保证（陈旧度 ≤ `Timer::intervalMs`）；三类状态类型**均无 `valid` 字段**，读失败**保留上一拍旧值**（首拍为零值）、不整体回退快照 | §3.11 |
 | D-17 | 提示 | CPU 节点命名（实现层提示） | CPU 侧须用 **cpufreq** 语义（`scaling_available_frequencies` / `scaling_cur_freq` / `scaling_setspeed`），**不可沿用 devfreq 命名** | §3.12 |
 | D-18 | 提示 | CPU 频率单位 | cpufreq 节点**原生即 kHz**：读入直解、写入直写，**禁止 ×1000** | §3.12 |
 | D-19 | 说明 | `CPU` / `NPU` 同构 | 两类方法集合同构（`get*Info` / `setFreq` / `readFreqTable`），差异仅在采集来源（procfs vs devfreq） | §3.13 |
 | D-20 | 说明 | `NPU` 与 `CPU` 差异 | `getNPUInfo` **不做** `/proc/stat` 差分（无 procfs）；利用率直接取 devfreq `load`（0~100 → `[0,1]`） | §3.13 |
 | D-21 | 提示 | NPU 频率单位 | devfreq 节点**原生为 Hz**：读 **÷1000**、写 **×1000**，与对外统一 kHz 对接 | §3.13 |
-| D-22 | 裁决 | 路径一律宏定义 | 五个路径常量统一 `#define`（`CONFIG_PATH` / `MODEL_DIR` / `CPU_FREQ_PATH` / `NPU_PATH` / `CPU_STAT_PATH`），公共头文件唯一出处；预处理期替换，**非变量非常量对象**；`--config` 可覆盖配置文件路径 | §4.3 |
+| D-22 | 裁决 | 路径一律宏定义 | 六个路径常量统一 `#define`（`CONFIG_PATH` / `MODEL_DIR` / `CPU_FREQ_PATH` / `NPU_FREQ_PATH` / `NPU_STAT_PATH` / `CPU_STAT_PATH`），公共头文件唯一出处；预处理期替换，**非变量非常量对象**；`--config` 可覆盖配置文件路径 | §4.3 |
 | D-23 | 裁决 | 装配归属与生命周期 | `main()` **不属** §1 的 13 个设计类、不进 §3.14 边表；`ConfigFile` 生命周期止于装配期；校验失败或键缺失**一律取默认、不阻塞启动** | §4.3 |
 | D-24 | 裁决 | 动作空间 vs 单次执行 | `actions` 是**可选动作全集**（大小 = `output_dim`），每次推理只取 `argmax` 选中的**一个**编号 | §4.4 |
 | D-25 | 裁决 | 契约三道校验分工 | 第 1、2 道归 `ContractFile::contractValidate`，第 3 道归 `decisionMaker::loadContract`（比**新会话**维度）；统一由 `setModelPath()` 编排，任一失败则模型与契约均不变 | §4.4 |
@@ -1265,7 +1275,7 @@
 | D-29 | 约定 | 半帧超时不剪空闲连接 | 判据为 `inbuf` 非空且距最后一次成功读到字节超 5 s；**不做 idle 超时**（常驻客户端长时间不发命令属正常）；命中即 `close` 回收 `maxConn` 槽位，**不回错误码、不要求重发**（对端已无接收能力，且 `taskAsk` 不幂等） | §4.6 |
 | D-30 | 裁决 | 归一化标度入契约 | `input_fields` 每项自带 `raw_min` / `raw_max`，分母只来自契约；编码器不内置标度常量；退化分量取 `0.5` | §4.4 |
 | D-31 | 裁决 | 推理超时的取消手段 | 同步 `Run()` 不可打断，超时由 `infer` 内部用局部 `RunOptions` + 一次性看护线程 `SetTerminate()` 实现；不收编成「独立推理线程」 | §3.4 |
-| D-32 | 裁决 | 回读不作成败判据 | `ok` 只取写入结果，回读仅刷新 `info.curFreqKHz`；不比对（驱动滞后、policy 跳变、热路径 I/O） | §3.12 |
+| D-32 | 裁决 | 回读不作成败判据 | `ok` 只取写入结果，回读仅刷新 `cpuInfo_.curFreqKHz` / `npuInfo_.curFreqKHz`；不比对（驱动滞后、policy 跳变、热路径 I/O） | §3.12 |
 | D-33 | 裁决 | 失败原因内部枚举 | `ResultInfo.reason`（`Reason`）由最靠近失败点的类填写，`handleFrame` 只做 `switch` 映射；不解析 `message`、不反查状态；`governor` 失败并入 `writeFailed` | §3.9 |
 | D-34 | 裁决 | 执行失败不参与降级 | `execDecision` 的 `ok=false` 只透传 + 记日志，不增不清 `failCount`、不触发 D-08 降级（三类失败皆配置 / 权限 / 驱动问题，换模型无用） | §3.6 |
 | D-35 | 裁决 | 两线程运行模型 | 只有服务线程与监控线程，**决策不单独成线程**（「三线程」说法作废）：`taskAsk` 同步、推理在服务线程内完成；代价是推理期间请求排队，由 D-31 硬超时封顶 | §6 |
@@ -1314,7 +1324,7 @@
 
 **决策不占独立线程**：`taskAsk` 是同步方法（D-01），`makeDecision` / `execDecision` 都是它的步骤，推理在服务线程内阻塞完成（D-35）。
 
-**跨线程共享只有一处**：`systemManager::systemInfo`——监控线程写（`setSystemInfo`）、服务线程读（`askSystemInfo`），两侧都持 `sysMutex`（§3.11）。其余对象要么由服务线程独占（`schedManager` / `decisionMaker` / `decisionExecutor` / `UDSService::conns`），要么是无状态静态类（`FileService` / `Timer`）。`ONNXruntime::session` 虽为静态，但 `setModel` 与 `infer` 同在服务线程，不存在并发替换，故无需额外互斥。
+**跨线程共享只有一处**：`systemManager::systemInfo`——监控线程写（`refreshSystemInfo` 持锁覆盖写）、服务线程读（`askSystemInfo`），两侧都持 `sysLock`（§3.11）。其余对象要么由服务线程独占（`schedManager` / `decisionMaker` / `decisionExecutor` / `UDSService::conns`），要么是无状态静态类（`FileService` / `Timer`）。`ONNXruntime::session` 虽为静态，但 `setModel` 与 `infer` 同在服务线程，不存在并发替换，故无需额外互斥。
 
 **同步模型的代价**：一次推理期间服务线程被占住，同期到达的请求（含 `GetState`）留在 `listen` backlog 中排队——不丢连接、只是延迟，单次占用由 D-31 的硬超时封顶。这也是 §4.6.2 不设 `seq` 的前提：单连接、线程内串行，一问一答天然有序。
 

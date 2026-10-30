@@ -23,14 +23,12 @@ namespace sched {
     //初始化
     CPU::~CPU() = default;
 
-    CPUInfo CPU::getCPUInfo() {
-        getInfo();                              
-        CPUInfo out;
+    void CPU::getCPUInfo(CPUInfo& out) {
+        refreshInfo();                              
         withCPULock([&](){ out = cpuInfo_; }); 
-        return out;
     }
 
-    CPUInfo& CPU::getInfo(){
+    void CPU::refreshInfo(){
         bool needRead = withCPULock([&](){return freqTable_.empty();});
         if (needRead) readFreqTable(1, [this](auto&& fn){ return withCPULock(fn); });
 
@@ -59,10 +57,6 @@ namespace sched {
         if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
             withCPULock([&](){cpuInfo_.curFreqKHz = static_cast<int>(readKHz);});
         }
-
-        // 引用返回以支持协变（基类为 deviceInfo&）；调用方应立即拷贝，勿跨帧持有
-        return cpuInfo_;
-
     }
 
     ResultInfo CPU::setFreq(const Freq& freq) {

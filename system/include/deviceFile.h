@@ -24,13 +24,9 @@ class deviceFile {
         deviceFile(std::string freqPath,std::string statPath,int freqMin,int freqMax);
         virtual ~deviceFile()=default;
     protected:
-        virtual deviceInfo& getInfo()=0;
+        virtual void refreshInfo()=0;
         virtual ResultInfo setFreq(const Freq& freq)=0;
 
-        // 读档位表：freqNode 为相对 freqPath_ 的节点名（cpufreq 用 scaling_available_frequencies，
-        // devfreq 用 available_frequencies）；divisor 为原生单位到 kHz 的除数；
-        // withLock 为派生类提供的加锁手段
-        // 模板定义必须在使用点可见，故置于头文件（放在 .cpp 里调用点看不到，链接期缺符号）
         template<typename LockFn>
         bool readFreqTable(int divisor,const std::string& freqNode, LockFn &&withLock){
             std::vector<int> table = parseFreqTable(FileService::read(freqPath_ +"/"+freqNode), divisor);

@@ -20,14 +20,12 @@
 namespace sched {
     NPU::~NPU() = default;
 
-    NPUInfo NPU::getNPUInfo() {
-        getInfo();                              
-        NPUInfo out;
+    void NPU::getNPUInfo(NPUInfo& out) {
+        refreshInfo();                              
         withNPULock([&](){ out = npuInfo_; }); 
-        return out;
     }
 
-    NPUInfo& NPU::getInfo() {
+    void NPU::refreshInfo() {
         bool needRead = withNPULock([&](){return freqTable_.empty();});
         if (needRead) readFreqTable(1000,[this](auto&& fn){ return withNPULock(fn); });
 
@@ -51,7 +49,6 @@ namespace sched {
                 utilOK = true;
         }
         withNPULock([&](){if(utilOK) npuInfo_.util=util;});
-        return npuInfo_;
     }
 
     ResultInfo NPU::setFreq(const Freq& freq) {
