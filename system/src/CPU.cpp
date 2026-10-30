@@ -20,77 +20,83 @@
 
 namespace sched {
 
-//初始化
-CPU::~CPU() = default;
+    //初始化
+    CPU::~CPU() = default;
 
-CPUInfo CPU::getInfo(){
-    bool needRead = withCPULock([&](){return freqTable_.empty();});
-    if (needRead) readFreqTable();
+    CPUInfo CPU::getCPUInfo() {
+        getInfo();                              
+        CPUInfo out;
+        withCPULock([&](){ out = cpuInfo_; }); 
+        return out;
+    }
 
-    uint64_t total = 0; uint64_t idle = 0;
-    const bool statOk = parseProcStat(FileService::read(statPath_), total, idle);
+    CPUInfo& CPU::getInfo(){
+        bool needRead = withCPULock([&](){return freqTable_.empty();});
+        if (needRead) readFreqTable(1, [this](auto&& fn){ return withCPULock(fn); });
 
-    //计算利用率
-    double util = 0.0;
-    bool utilOK=false;
-    if (statOk) {
-        if (hasPrevSample_ && total >= prevTotal_ && idle >= prevIdle_) {
-            const uint64_t dTotal = total - prevTotal_;
-            const uint64_t dIdle = idle - prevIdle_;
-            util = (dTotal > 0) ? (1.0 - static_cast<double>(dIdle) / dTotal) : 0.0;
-            utilOK=true;
+        uint64_t total = 0; uint64_t idle = 0;
+        const bool statOk = parseProcStat(FileService::read(statPath_), total, idle);
+
+        //计算利用率：差分基准的「读」与「写」必须在同一把锁内 ——
+        // 否则两个线程会拿同一份基准重复差分（利用率偏低），且构成数据竞争
+        if (statOk) {
+            withCPULock([&](){
+                if (hasPrevSample_ && total >= prevTotal_ && idle >= prevIdle_) {
+                    const uint64_t dTotal = total - prevTotal_;
+                    const uint64_t dIdle = idle - prevIdle_;
+                    cpuInfo_.util = (dTotal > 0)
+                                  ? (1.0 - static_cast<double>(dIdle) / dTotal)
+                                  : 0.0;
+                }
+                prevTotal_ = total;
+                prevIdle_ = idle;
+                hasPrevSample_ = true;
+            });
         }
-        withCPULock([&](){
-            prevTotal_ = total;
-            prevIdle_ = idle;
-            hasPrevSample_ = true;
-        });
-        
-    }    
-    withCPULock([&](){if(utilOK) cpuInfo_.util=util;});
 
-    // 读当前频率（锁外 I/O，原生 kHz 不折算）；读失败保留旧值
-    long long readKHz = 0;
-    if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
-        withCPULock([&](){cpuInfo_.curFreqKHz = static_cast<int>(readKHz);});
-    }
-
-    return withCPULock([&](){return cpuInfo_;});
-
-}
-
-ResultInfo CPU::setFreq(const Freq& freq) {
-    bool needRead = withCPULock([&](){return freqTable_.empty();});
-    if (needRead) readFreqTable();
-
-    std::vector<int> table = withCPULock([&](){return freqTable_;});
-    if (table.empty())
-        return ResultInfo{false, "freq table unavailable", Reason::freqUnavailable};
-
-    int targetKHz = freq.freqKHz;
-    if (!std::binary_search(table.begin(), table.end(), targetKHz)) {
-        targetKHz = nearestFreqKHz(table, targetKHz);
-    }
-
-    // 非 userspace 下内核拒写 scaling_setspeed，硬写只会回读到旧值 —— 先切策略
-    if (FileService::read(freqPath_ + "/scaling_governor").find("userspace") != 0) {
-        if (!FileService::write(freqPath_ + "/scaling_governor", "userspace")) {
-            return ResultInfo{false, "governor switch failed", Reason::writeFailed};
+        // 读当前频率（锁外 I/O，原生 kHz 不折算）；读失败保留旧值
+        long long readKHz = 0;
+        if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
+            withCPULock([&](){cpuInfo_.curFreqKHz = static_cast<int>(readKHz);});
         }
+
+        // 引用返回以支持协变（基类为 deviceInfo&）；调用方应立即拷贝，勿跨帧持有
+        return cpuInfo_;
+
     }
 
-    bool writeOK=FileService::write(freqPath_ + "/scaling_setspeed", std::to_string(targetKHz));
-    if (!writeOK) {
-        return ResultInfo{false, "write freq failed", Reason::writeFailed};
-    }
+    ResultInfo CPU::setFreq(const Freq& freq) {
+        bool needRead = withCPULock([&](){return freqTable_.empty();});
+        if (needRead) readFreqTable(1, [this](auto&& fn){ return withCPULock(fn); });
 
-    // 回读刷新真实值（D-32：不与目标值比对、不作成败判据）；读失败保留写入前的值
-    long long readKHz = 0;
-    if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
-        withCPULock([&](){cpuInfo_.curFreqKHz = static_cast<int>(readKHz);});
-    }
+        std::vector<int> table = withCPULock([&](){return freqTable_;});
+        if (table.empty())
+            return ResultInfo{false, "freq table unavailable", Reason::freqUnavailable};
 
-    return ResultInfo{true, std::string(), Reason::none};
-}
+        int targetKHz = freq.freqKHz;
+        if (!std::binary_search(table.begin(), table.end(), targetKHz)) {
+            targetKHz = nearestFreqKHz(table, targetKHz);
+        }
+
+        // 非 userspace 下内核拒写 scaling_setspeed，硬写只会回读到旧值 —— 先切策略
+        if (FileService::read(freqPath_ + "/scaling_governor").find("userspace") != 0) {
+            if (!FileService::write(freqPath_ + "/scaling_governor", "userspace")) {
+                return ResultInfo{false, "governor switch failed", Reason::writeFailed};
+            }
+        }
+
+        bool writeOK=FileService::write(freqPath_ + "/scaling_setspeed", std::to_string(targetKHz));
+        if (!writeOK) {
+            return ResultInfo{false, "write freq failed", Reason::writeFailed};
+        }
+
+        // 回读刷新真实值（D-32：不与目标值比对、不作成败判据）；读失败保留写入前的值
+        long long readKHz = 0;
+        if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
+            withCPULock([&](){cpuInfo_.curFreqKHz = static_cast<int>(readKHz);});
+        }
+
+        return ResultInfo{true, std::string(), Reason::none};
+    }
 
 } // namespace sched

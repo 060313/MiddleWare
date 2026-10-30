@@ -7,6 +7,10 @@
 // 覆盖：解析去重升序、档位收窄、收窄后退化、D-21 单位折算、越界与并列夹取、
 //       governor 切换、D-32 回读不比对、/proc/stat 两帧差分、档位表懒加载、
 //       节点缺失兜底（含「装表失败才算真 3002」）、并发。
+//
+// 探针：档位表落在 deviceFile 内且为 protected，而「解析去重升序 / 收窄 / 收窄退化」
+//       三者的效果都被 setFreq 的夹取吸收掉了，没有公开出口可断言 —— 故派生 CpuProbe /
+//       NpuProbe 两个只读探针把表取出来（不改任何状态）；其余用例一律走公开接口。
 
 #include <cmath>
 #include <cstdio>
@@ -33,6 +37,17 @@ const std::string kRoot = "build/test_fake";
 const std::string kCpu = kRoot + "/cpu0/cpufreq";
 const std::string kNpu = kRoot + "/npu";
 const std::string kProc = kRoot + "/proc_stat";
+
+// 只读探针：仅把 protected 的 freqTable_ 取出来，不暴露任何写入口
+struct CpuProbe : CPU {
+    using CPU::CPU;
+    const std::vector<int>& table() const { return freqTable_; }
+};
+
+struct NpuProbe : NPU {
+    using NPU::NPU;
+    const std::vector<int>& table() const { return freqTable_; }
+};
 
 void put(const std::string& path, const std::string& text) {
     FileService::write(path, text);
@@ -74,8 +89,9 @@ void resetProc(const std::string& user, const std::string& system,
 void testParseTable() {
     std::printf("1. 档位表解析（乱序 + 重复 → 去重升序）\n");
     resetCpu();
-    CPU cpu(kCpu, kProc);
-    const std::vector<int> table = cpu.getCPUInfo().freqTable;
+    CpuProbe cpu(kCpu, kProc);
+    cpu.getCPUInfo();                        // 触发懒加载装表
+    const std::vector<int>& table = cpu.table();
     CHECK(table.size() == 3);
     CHECK(table[0] == 1600000 && table[1] == 1800000 && table[2] == 2000000);
 }
@@ -84,8 +100,9 @@ void testParseTable() {
 void testNarrow() {
     std::printf("2. 档位收窄（freqMin / freqMax）\n");
     resetCpu();
-    CPU cpu(kCpu, kProc, 1700000, 1900000);
-    const std::vector<int> table = cpu.getCPUInfo().freqTable;
+    CpuProbe cpu(kCpu, kProc, 1700000, 1900000);
+    cpu.getCPUInfo();
+    const std::vector<int>& table = cpu.table();
     CHECK(table.size() == 1 && table[0] == 1800000);
 }
 
@@ -93,8 +110,9 @@ void testNarrow() {
 void testNarrowEmpty() {
     std::printf("3. 收窄后为空 → 退化整表（否则 setFreq 永远 3002）\n");
     resetCpu();
-    CPU cpu(kCpu, kProc, 5000000, 6000000);   // 上下限高于所有档位
-    const std::vector<int> table = cpu.getCPUInfo().freqTable;
+    CpuProbe cpu(kCpu, kProc, 5000000, 6000000);   // 上下限高于所有档位
+    cpu.getCPUInfo();
+    const std::vector<int>& table = cpu.table();
     CHECK(table.size() == 3);   // 退化：仍是完整三档
 }
 
@@ -102,10 +120,10 @@ void testNarrowEmpty() {
 void testNpuUnit() {
     std::printf("4. NPU 单位折算（Hz → kHz，D-21）\n");
     resetNpu();
-    NPU npu(kNpu);
+    NpuProbe npu(kNpu, kNpu);   // statPath 显式给同目录：留空会退化为宏 NPU_STAT_PATH
     const NPUInfo info = npu.getNPUInfo();
-    CHECK(info.freqTable.size() == 3);
-    CHECK(info.freqTable[0] == 800000 && info.freqTable[2] == 1200000);
+    CHECK(npu.table().size() == 3);
+    CHECK(npu.table()[0] == 800000 && npu.table()[2] == 1200000);
     CHECK(info.curFreqKHz == 1000000);
     CHECK(std::fabs(info.util - 0.42) < 1e-9);   // load = 42 → 0.42
 }
@@ -128,7 +146,7 @@ void testClampHigh() {
 void testClampTie() {
     std::printf("6. 并列夹取（等距 → 取较小档）\n");
     resetNpu();
-    NPU npu(kNpu);   // 表 = {800000, 1000000, 1200000} kHz
+    NPU npu(kNpu, kNpu);   // 表 = {800000, 1000000, 1200000} kHz
     npu.getNPUInfo();
     Freq f;
     f.device = "npu";
@@ -176,9 +194,10 @@ void testProcStatDiff() {
     resetNpu();
     resetProc("1000", "500", "8000", "100");   // total 9600, idle 8100
 
-    systemManager mgr(kCpu, kNpu, kProc);
+    systemManager mgr(kCpu, kNpu, kProc, kNpu);   // 第 4 参显式给：留空退化为宏 NPU_STAT_PATH
     mgr.refreshSystemInfo();
     CHECK(mgr.askSystemInfo().ucpu == 0.0);   // 首帧无基准 → 占位 0
+    CHECK(std::fabs(mgr.askSystemInfo().unpu - 0.42) < 1e-9);   // load 单帧即得
 
     // total 9950（+350），idle 8250（+150）→ util = 1 - 150/350 ≈ 0.5714
     resetProc("1100", "600", "8100", "150");
@@ -192,9 +211,9 @@ void testProcStatDiff() {
 void testMissingNodes() {
     std::printf("10. 节点缺失（零值兜底 + setFreq 回 3002）\n");
     const std::string bad = kRoot + "/nonexistent";
-    CPU cpu(bad, bad);
+    CpuProbe cpu(bad, bad);
     const CPUInfo info = cpu.getCPUInfo();
-    CHECK(info.freqTable.empty() && info.curFreqKHz == 0 && info.util == 0.0);
+    CHECK(cpu.table().empty() && info.curFreqKHz == 0 && info.util == 0.0);
 
     Freq f;
     f.device = "cpu";
@@ -202,9 +221,9 @@ void testMissingNodes() {
     const ResultInfo r = cpu.setFreq(f);
     CHECK(!r.ok && r.reason == Reason::freqUnavailable);
 
-    NPU npu(bad);
+    NpuProbe npu(bad, bad);
     const NPUInfo ninfo = npu.getNPUInfo();
-    CHECK(ninfo.freqTable.empty() && ninfo.curFreqKHz == 0 && ninfo.util == 0.0);
+    CHECK(npu.table().empty() && ninfo.curFreqKHz == 0 && ninfo.util == 0.0);
 
     Freq fn;
     fn.device = "npu";
@@ -220,8 +239,8 @@ void testLazyTableLoad() {
     std::printf("11. 档位表懒加载（未经采集直接 setFreq → 自行装表并成功）\n");
     resetCpu();
     resetNpu();
-    CPU cpu(kCpu, kProc);
-    NPU npu(kNpu);
+    CpuProbe cpu(kCpu, kProc);
+    NpuProbe npu(kNpu, kNpu);
 
     Freq fc;
     fc.device = "cpu";
@@ -229,7 +248,7 @@ void testLazyTableLoad() {
     const ResultInfo rc = cpu.setFreq(fc);
     CHECK(rc.ok);                                          // 懒加载后表已装配，不再假 3002
     CHECK(get(kCpu + "/scaling_setspeed") == "1800000");   // 确实写了节点
-    CHECK(cpu.getCPUInfo().freqTable.size() == 3);         // 装表副作用可被后续采集看到
+    CHECK(cpu.table().size() == 3);                        // 装表副作用可被后续读表看到
 
     Freq fn;
     fn.device = "npu";
@@ -237,7 +256,7 @@ void testLazyTableLoad() {
     const ResultInfo rn = npu.setFreq(fn);
     CHECK(rn.ok);
     CHECK(get(kNpu + "/userspace/set_freq") == "1000000000");   // D-21：×1000 后写出
-    CHECK(npu.getNPUInfo().freqTable.size() == 3);
+    CHECK(npu.table().size() == 3);
 }
 
 // 12. 并发：监控线程刷、服务线程读与调频
@@ -247,7 +266,7 @@ void testConcurrent() {
     resetNpu();
     resetProc("1000", "500", "8000", "100");
 
-    systemManager mgr(kCpu, kNpu, kProc);
+    systemManager mgr(kCpu, kNpu, kProc, kNpu);
     std::thread t1([&mgr] { for (int i = 0; i < 100; ++i) { mgr.refreshSystemInfo(); } });
     std::thread t2([&mgr] { for (int i = 0; i < 100; ++i) { (void)mgr.askSystemInfo(); } });
     std::thread t3([&mgr] {

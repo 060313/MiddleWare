@@ -12,99 +12,80 @@
 #include "system/include/NPU.h"
 
 #include <algorithm>
-#include <mutex>
 #include <string>
 
 #include "common/include/FileService.h"
 #include "common/include/FreqUtil.h"
-#include "common/include/SchedDefs.h"
 
 namespace sched {
+    NPU::~NPU() = default;
 
-NPU::NPU(const std::string& npuPath, int freqMin, int freqMax)
-    : npuPath_(npuPath), freqMin_(freqMin), freqMax_(freqMax) {}
-
-NPU::~NPU() = default;
-
-NPUInfo NPU::getNPUInfo() {
-    bool needRead = withNPULock([&](){return freqTable_.empty();});
-    if (needRead) readFreqTable();
-
-    // 读当前频率（锁外 I/O，原生 Hz → ÷1000）；读失败保留旧值
-    long long readHz = 0;
-    if (parseInt(FileService::read(npuPath_ + "/cur_freq"), readHz))
-        withNPULock([&](){npuInfo_.curFreqKHz = static_cast<int>(readHz / 1000);});
-
-    // load 节点由驱动可选导出，读失败或不可解析 → util 保持 0（不中断采集）
-    long long load = 0;
-    double util = 0.0;
-    bool utilOK = false;
-    if (parseInt(FileService::read(npuPath_ + "/load"), load)){
-            util = static_cast<double>(load) / 100.0;
-            if (util < 0.0) {
-                util = 0.0;
-            }
-            if (util > 1.0) {
-                util = 1.0;
-            }
-            utilOK = true;
-    }
-    withNPULock([&](){if(utilOK) npuInfo_.util=util;});
-    return withNPULock([&](){return npuInfo_;});
-}
-
-ResultInfo NPU::setFreq(const Freq& freq) {
-    bool needRead = withNPULock([&](){return freqTable_.empty();});
-    if (needRead) readFreqTable();
-
-    std::vector<int> table;
-    withNPULock([&](){table = freqTable_;});
-    if (table.empty()) {
-        return ResultInfo{false, "freq table unavailable", Reason::freqUnavailable};
+    NPUInfo NPU::getNPUInfo() {
+        getInfo();                              
+        NPUInfo out;
+        withNPULock([&](){ out = npuInfo_; }); 
+        return out;
     }
 
-    int targetKHz = freq.freqKHz;
-    if (!std::binary_search(table.begin(), table.end(), targetKHz)) {
-        targetKHz = nearestFreqKHz(table, targetKHz);
-    }
+    NPUInfo& NPU::getInfo() {
+        bool needRead = withNPULock([&](){return freqTable_.empty();});
+        if (needRead) readFreqTable(1000,[this](auto&& fn){ return withNPULock(fn); });
 
-    // 仅 userspace 允许写 userspace/set_freq —— 先切策略
-    if (FileService::read(npuPath_ + "/governor").find("userspace") != 0) {
-        if (!FileService::write(npuPath_ + "/governor", "userspace")) {
-            return ResultInfo{false, "governor switch failed", Reason::writeFailed};
+        // 读当前频率（锁外 I/O，原生 Hz → ÷1000）；读失败保留旧值
+        long long readHz = 0;
+        if (parseInt(FileService::read(freqPath_ + "/cur_freq"), readHz))
+            withNPULock([&](){npuInfo_.curFreqKHz = static_cast<int>(readHz / 1000);});
+
+        // load 节点由驱动可选导出，读失败或不可解析 → util 保持 0（不中断采集）
+        long long load = 0;
+        double util = 0.0;
+        bool utilOK = false;
+        if (parseInt(FileService::read(statPath_ + "/load"), load)){
+                util = static_cast<double>(load) / 100.0;
+                if (util < 0.0) {
+                    util = 0.0;
+                }
+                if (util > 1.0) {
+                    util = 1.0;
+                }
+                utilOK = true;
         }
+        withNPULock([&](){if(utilOK) npuInfo_.util=util;});
+        return npuInfo_;
     }
 
-    bool writeOK=FileService::write(npuPath_ + "/userspace/set_freq",std::to_string(static_cast<long long>(targetKHz) * 1000));
-    if (!writeOK) {
-        return ResultInfo{false, "write freq failed", Reason::writeFailed};
-    }
+    ResultInfo NPU::setFreq(const Freq& freq) {
+        bool needRead = withNPULock([&](){return freqTable_.empty();});
+        if (needRead) readFreqTable(1000,[this](auto&& fn){ return withNPULock(fn); });
 
-    // 回读刷新真实值（D-32：不与目标值比对、不作成败判据）；读失败保留写入前的值
-    long long readHz = 0;
-    if (parseInt(FileService::read(npuPath_ + "/cur_freq"), readHz))
-        withNPULock([&](){npuInfo_.curFreqKHz = static_cast<int>(readHz / 1000);});
-
-    return ResultInfo{true, std::string(), Reason::none};
-}
-
-// 读档位表
-bool NPU::readFreqTable() {
-    std::vector<int> table = parseFreqTable(FileService::read(npuPath_ + "/available_frequencies"), 1000);   // D-21：原生 Hz
-    if (table.empty()) return false;
-
-    std::vector<int> narrowed;
-    for (const int f : table) {
-        if ((freqMin_ > 0 && f < freqMin_) || (freqMax_ > 0 && f > freqMax_)) {
-            continue;
+        std::vector<int> table;
+        withNPULock([&](){table = freqTable_;});
+        if (table.empty()) {
+            return ResultInfo{false, "freq table unavailable", Reason::freqUnavailable};
         }
-        narrowed.push_back(f);
+
+        int targetKHz = freq.freqKHz;
+        if (!std::binary_search(table.begin(), table.end(), targetKHz)) {
+            targetKHz = nearestFreqKHz(table, targetKHz);
+        }
+
+        // 仅 userspace 允许写 userspace/set_freq —— 先切策略
+        if (FileService::read(freqPath_ + "/governor").find("userspace") != 0) {
+            if (!FileService::write(freqPath_ + "/governor", "userspace")) {
+                return ResultInfo{false, "governor switch failed", Reason::writeFailed};
+            }
+        }
+
+        bool writeOK=FileService::write(freqPath_ + "/userspace/set_freq",std::to_string(static_cast<long long>(targetKHz) * 1000));
+        if (!writeOK) {
+            return ResultInfo{false, "write freq failed", Reason::writeFailed};
+        }
+
+        // 回读刷新真实值（D-32：不与目标值比对、不作成败判据）；读失败保留写入前的值
+        long long readHz = 0;
+        if (parseInt(FileService::read(freqPath_ + "/cur_freq"), readHz))
+            withNPULock([&](){npuInfo_.curFreqKHz = static_cast<int>(readHz / 1000);});
+
+        return ResultInfo{true, std::string(), Reason::none};
     }
-
-    const bool empty = narrowed.empty();
-    withNPULock([&](){freqTable_ = empty ? std::move(table) : std::move(narrowed);});
-
-    return !empty;
-}
-
 } // namespace sched

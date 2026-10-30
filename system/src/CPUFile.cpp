@@ -8,6 +8,13 @@
 #include "common/include/FreqUtil.h"
 
 namespace sched{
+
+openEulerCPUFile::openEulerCPUFile(const std::string& freqPath, const std::string& statPath,
+                                   int freqMin, int freqMax)
+    : deviceFile(freqPath, statPath, freqMin, freqMax) {}
+
+openEulerCPUFile::~openEulerCPUFile() = default;
+
     bool openEulerCPUFile::parseProcStat(const std::string& content, uint64_t& total, uint64_t& idle){
         //提取文件第一行
         const std::size_t eol = content.find('\n');

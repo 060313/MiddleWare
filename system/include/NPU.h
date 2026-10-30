@@ -3,7 +3,8 @@
 //
 // 职责：读 / 写 devfreq 频率节点、读 load 节点得利用率。
 // 设计依据：
-//   - 与 CPU **方法集合同构**（D-19），但无 procfs：不持 statPath / 差分基准；
+//   - 与 CPU **方法集合同构**（D-19），但无 procfs：**不持差分基准**；
+//     statPath 仍持有，仅用于读 `load` 节点（异形设备可与频率挂点不同目录）；
 //   - 利用率取 devfreq `load`（0~100 → [0,1]），**单帧即得**，无首帧占位问题；
 //   - D-21：devfreq 节点**原生单位 Hz** —— 读入 ÷1000、写出 ×1000，
 //     表 / 当前值 / 收窄上下限的比较与存储一律在 kHz 上进行；
@@ -18,22 +19,22 @@
 
 #include "common/include/SchedDefs.h"
 #include "common/include/SchedTypes.h"
+#include "system/include/NPUFile.h"
 
 namespace sched {
 
-class NPU {
+class NPU : public NPUFile{
 public:
     // npuPath：devfreq 挂点；
     // freqMin / freqMax：收窄上下限（kHz，0 表不限）
-    NPU(const std::string& npuPath=std::string(NPU_PATH), int freqMin = 0, int freqMax = 0);
-    ~NPU();
+    NPU(const std::string& freqPath=std::string(NPU_FREQ_PATH),const std::string& statPath=std::string(NPU_STAT_PATH),int freqMin = 0, int freqMax = 0)
+            :NPUFile(freqPath,statPath,freqMin,freqMax){};
+    ~NPU() override;
 
-    // 确保频率表已读 → 读当前频率 → 读 load → 组装 NPUInfo
     NPUInfo getNPUInfo();
-
-    // 确保频率表已读（懒加载）→ 可承载性判定（越界夹取）→ 确保 governor 为 userspace
-    // → 写节点 → 回读刷新 npuInfo_.curFreqKHz
-    ResultInfo setFreq(const Freq& freq);
+    
+    NPUInfo& getInfo() override;
+    ResultInfo setFreq(const Freq& freq) override;
 
 private:
     //操作锁
@@ -42,18 +43,8 @@ private:
         const std::lock_guard<std::mutex> lock(npuLock_);
         return fun();
     }
-
-    // 读档位表：解析（Hz → ÷1000）→ 去重升序 → 收窄 → 持锁替换 freqTable_（唯一写入点）
-    bool readFreqTable();
-
-    std::string npuPath_;         // devfreq 挂点
-    int freqMin_ = 0;             // 档位收窄下限（kHz；0 表不限）
-    int freqMax_ = 0;             // 档位收窄上限（kHz；0 表不限）
-
     // 跨线程共享状态，一律在 npuLock_ 下读写
     NPUInfo npuInfo_;
-    std::vector<int> freqTable_;  // 可用频率表（kHz，已收窄）
-
     mutable std::mutex npuLock_;
 };
 

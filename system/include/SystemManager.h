@@ -27,10 +27,12 @@ class NPU;
 
 class systemManager {
 public:
-    // 三个路径为空则退化为宏默认；四个收窄值非负，0 表不限。构造内创建 CPU / NPU，**不读设备节点**
+    // 四个路径为空则各自退化为对应宏默认（NPU 状态路径取 NPU_STAT_PATH，**不随 NPU 频率路径联动**）；
+    // 四个收窄值非负，0 表不限。构造内创建 CPU / NPU，**不读设备节点**
     systemManager(const std::string& cpuFreqPath=std::string(CPU_FREQ_PATH),
-                  const std::string& npuPath=std::string(NPU_PATH),
+                  const std::string& npuPath=std::string(NPU_FREQ_PATH),
                   const std::string& cpuStatPath=std::string(CPU_STAT_PATH),
+                  const std::string& npuStatPath=std::string(NPU_STAT_PATH),
                   int cpuFreqMin = 0,
                   int cpuFreqMax = 0,
                   int npuFreqMin = 0,

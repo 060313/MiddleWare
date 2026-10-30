@@ -5,8 +5,6 @@
 //       档位表与当前频率的 kHz 直读直写（D-18）、governor 切 userspace，
 //       以及由 /proc/stat 两帧差分得到利用率。
 //       对上只暴露 kHz 语义与 [0,1] 利用率，不泄漏节点名与单位。
-//
-// 当前状态：仅有预处理与类骨架，方法体留白待补。
 
 #ifndef SCHED_SYSTEM_CPUFILE_H
 #define SCHED_SYSTEM_CPUFILE_H
@@ -27,15 +25,20 @@ public:
             const std::string& statPath = std::string(CPU_STAT_PATH),
             int freqMin = 0,
             int freqMax = 0);
-    ~openEulerCPUFile();
+    ~openEulerCPUFile() override;
 
 protected:
+    template<typename LockFn>
+    bool readFreqTable(int divisor,LockFn &&withLock){
+        return deviceFile::readFreqTable(divisor,freqNode,withLock);
+    }
 
     bool parseProcStat(const std::string& content, uint64_t& total, uint64_t& idle);
 
     uint64_t prevTotal_ = 0;      
     uint64_t prevIdle_ = 0;       
-    bool hasPrevSample_ = false;  
+    bool hasPrevSample_ = false;
+    std::string freqNode = "scaling_available_frequencies";
 };
 
 } // namespace sched

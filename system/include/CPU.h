@@ -14,12 +14,9 @@
 #ifndef SCHED_SYSTEM_CPU_H
 #define SCHED_SYSTEM_CPU_H
 
-#include <cstdint>
 #include <mutex>
 #include <string>
-#include <vector>
 
-#include "common/include/SchedDefs.h"
 #include "common/include/SchedTypes.h"
 #include "system/include/CPUFile.h"
 
@@ -27,31 +24,25 @@ namespace sched {
 
 class CPU : public openEulerCPUFile{
 public:
-    // freqPath_:CPU设备频率路径；
-    // statPath:CPU设备状态路径；
-    // freqMin：频率下限；
-    // freqMax：频率上限。
-    CPU(const std::string& freqPath=std::string(CPU_FREQ_PATH),
-        const std::string& statPath=std::string(CPU_STAT_PATH),
+    CPU(const std::string& freqPath,
+        const std::string& statPath,
         int freqMin = 0,
         int freqMax = 0):openEulerCPUFile(freqPath,statPath,freqMin,freqMax){};
-    ~CPU();
+    ~CPU() override;
 
-    //返回CPU设备信息
-    CPUInfo getCPUInfo(){
-        return getInfo();
-    }
+    CPUInfo getCPUInfo();
+
+    // 覆写基类
+    CPUInfo& getInfo() override;
+    ResultInfo setFreq(const Freq& freq) override;
 
 private:
+
     // 操作上锁：持 cpuLock_ 执行 fun 并转发其返回值（模板定义须在使用点可见，故放头文件）
     template<typename Function>
     auto withCPULock(Function&& fun) {
         const std::lock_guard<std::mutex> lock(cpuLock_);
         return fun();
-    }
-    // 读档位表
-    bool readFreqTable(){
-        readFreqTable();
     }
 
     // 跨线程共享状态，一律在 cpuLock_ 下读写

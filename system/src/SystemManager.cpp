@@ -17,16 +17,23 @@
 namespace sched {
 
 systemManager::systemManager(const std::string& cpuFreqPath,
-                             const std::string& npuPath,
+                             const std::string& npufreqPath,
                              const std::string& cpuStatPath,
+                             const std::string& npuStatPath,
                              int cpuFreqMin,
                              int cpuFreqMax,
                              int npuFreqMin,
                              int npuFreqMax) {
 
+    // 路径留空退化为宏默认（D-22）：配置文件键留空时不应把空串一路传到设备层
+    const std::string cpuFreq = cpuFreqPath.empty() ? std::string(CPU_FREQ_PATH) : cpuFreqPath;
+    const std::string cpuStat = cpuStatPath.empty() ? std::string(CPU_STAT_PATH) : cpuStatPath;
+    const std::string npuFreq = npufreqPath.empty() ? std::string(NPU_FREQ_PATH) : npufreqPath;
+    const std::string npuStat = npuStatPath.empty() ? std::string(NPU_STAT_PATH) : npuStatPath;
+
     // make_unique 而非裸 new：第二步抛异常时，已建好的那个由 unique_ptr 成员自行析构
-    cpu_ = std::make_unique<CPU>(cpuFreqPath, cpuStatPath, cpuFreqMin, cpuFreqMax);
-    npu_ = std::make_unique<NPU>(npuPath, npuFreqMin, npuFreqMax);
+    cpu_ = std::make_unique<CPU>(cpuFreq, cpuStat, cpuFreqMin, cpuFreqMax);
+    npu_ = std::make_unique<NPU>(npuFreq, npuStat, npuFreqMin, npuFreqMax);
 
     systemInfo_ = SystemInfo{};   // 零值快照，等后台首次 refreshSystemInfo
 }

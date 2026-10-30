@@ -73,6 +73,7 @@ bool ScheddApp::init(const std::string& configPath) {
     const int npuFreqMax = config.getInt("system", "npu_freq_max", 0);
     const std::string cpuFreqPath = config.getString("system", "cpu_freq_path", "");
     const std::string npuFreqPath = config.getString("system", "npu_freq_path", "");
+    const std::string npuStatPath = config.getString("system", "npu_stat_path", "");
     const std::string procStatPath = config.getString("system", "proc_stat_path", "");
     const int sampleMs = config.getInt("system", "sample_interval_ms", kDefaultSampleMs);
 
@@ -80,6 +81,7 @@ bool ScheddApp::init(const std::string& configPath) {
 
     // ---- 步 2~7：自底向上构造（构造只赋值、不 I/O，故不可失败）----
     systemManager_ = std::make_unique<systemManager>(cpuFreqPath, npuFreqPath, procStatPath,
+                                                    npuStatPath,
                                                     cpuFreqMin, cpuFreqMax,
                                                     npuFreqMin, npuFreqMax);
     systemInterface_ = std::make_unique<systemInterface>(systemManager_.get());

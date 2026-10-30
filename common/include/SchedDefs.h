@@ -20,7 +20,10 @@
 #define CPU_FREQ_PATH "/sys/devices/system/cpu/cpu0/cpufreq"
 
 // NPU 频率设备节点（devfreq 挂点，D-21：节点原生单位 Hz）
-#define NPU_PATH "/sys/class/devfreq/fdab0000.npu"
+#define NPU_FREQ_PATH "/sys/class/devfreq/fdab0000.npu"
+
+// NPU 状态设备节点（devfreq 挂点，D-21：节点原生单位 Hz）
+#define NPU_STAT_PATH "/sys/class/devfreq/fdab0000.npu"
 
 // CPU 累计 jiffies 统计文件（利用率差分基准，§3.12 getCPUInfo S2）
 #define CPU_STAT_PATH "/proc/stat"
