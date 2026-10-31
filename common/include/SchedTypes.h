@@ -34,7 +34,9 @@ enum class Reason {
     inferenceFailed,   // 推理失败（空结果 / 超时取消）   -> 2002
     deviceUnknown,     // 设备标识非法或未创建            -> 3001
     freqUnavailable,   // 档位表不可用                   -> 3002
-    writeFailed        // 写频率节点失败（含 governor）    -> 3003
+    writeFailed,        // 写频率节点失败（含 governor）    -> 3003
+    refreshInfoFalse,
+    getStateFalse
 };
 
 // ---------------------------------------------------------------------------

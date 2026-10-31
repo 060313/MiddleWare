@@ -40,7 +40,7 @@ public:
     ~systemManager();
 
     // 持锁把 systemInfo 副本写入出参 out（纯读，不触发采样）；不出借内部状态
-    void askSystemInfo(SystemInfo& out);
+    ResultInfo askSystemInfo(SystemInfo& out);
 
     // 定时刷新入口：读两路设备（锁外）→ 取四个特征分量 → 持锁覆盖缓存
     bool refreshSystemInfo();
@@ -60,6 +60,7 @@ private:
     std::unique_ptr<NPU> npu_;
 
     SystemInfo systemInfo_;    // 最近一次刷新的缓存（跨线程读写）
+    ResultInfo infoState;       
     std::mutex sysLock_;      // 只保护 systemInfo_，不保护设备 I/O
 
 };

@@ -29,10 +29,10 @@ public:
     ~CPU() override;
 
     // 出参写本次采样（内部 refreshInfo 采样后持 cpuLock_ 拷出）；**不返回引用**，锁外触碰不到内部状态
-    void getCPUInfo(CPUInfo& out);
+    ResultInfo getCPUInfo(CPUInfo& out);
 
     // 覆写基类
-    void refreshInfo() override;
+    ResultInfo refreshInfo() override;
     ResultInfo setFreq(const Freq& freq) override;
 
 private:

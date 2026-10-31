@@ -23,20 +23,22 @@ namespace sched {
     //初始化
     CPU::~CPU() = default;
 
-    void CPU::getCPUInfo(CPUInfo& out) {
-        refreshInfo();                              
+    ResultInfo CPU::getCPUInfo(CPUInfo& out) {
+        ResultInfo info=refreshInfo();                              
         withCPULock([&](){ out = cpuInfo_; }); 
+        return info;
     }
 
-    void CPU::refreshInfo(){
+    ResultInfo CPU::refreshInfo(){
+        ResultInfo res=ResultInfo{true, std::string(), Reason::none};
         bool needRead = withCPULock([&](){return freqTable_.empty();});
-        if (needRead) readFreqTable(1, [this](auto&& fn){ return withCPULock(fn); });
+        bool readOK=true;
+        if (needRead) readOK=readFreqTable(1, [this](auto&& fn){ return withCPULock(fn); });
+        if(!readOK) res=ResultInfo{false,"read frequency table false",Reason::refreshInfoFalse};
 
         uint64_t total = 0; uint64_t idle = 0;
         const bool statOk = parseProcStat(FileService::read(statPath_), total, idle);
 
-        //计算利用率：差分基准的「读」与「写」必须在同一把锁内 ——
-        // 否则两个线程会拿同一份基准重复差分（利用率偏低），且构成数据竞争
         if (statOk) {
             withCPULock([&](){
                 if (hasPrevSample_ && total >= prevTotal_ && idle >= prevIdle_) {
@@ -50,13 +52,16 @@ namespace sched {
                 prevIdle_ = idle;
                 hasPrevSample_ = true;
             });
-        }
+        }else
+            res=ResultInfo{false,"read state false",Reason::refreshInfoFalse};
 
-        // 读当前频率（锁外 I/O，原生 kHz 不折算）；读失败保留旧值
         long long readKHz = 0;
-        if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz)) {
+        if (parseInt(FileService::read(freqPath_ + "/scaling_cur_freq"), readKHz))
             withCPULock([&](){cpuInfo_.curFreqKHz = static_cast<int>(readKHz);});
-        }
+        else
+            res=ResultInfo{false,"refresh frequency buffer false",Reason::refreshInfoFalse};
+
+        return res;
     }
 
     ResultInfo CPU::setFreq(const Freq& freq) {
@@ -72,7 +77,6 @@ namespace sched {
             targetKHz = nearestFreqKHz(table, targetKHz);
         }
 
-        // 非 userspace 下内核拒写 scaling_setspeed，硬写只会回读到旧值 —— 先切策略
         if (FileService::read(freqPath_ + "/scaling_governor").find("userspace") != 0) {
             if (!FileService::write(freqPath_ + "/scaling_governor", "userspace")) {
                 return ResultInfo{false, "governor switch failed", Reason::writeFailed};

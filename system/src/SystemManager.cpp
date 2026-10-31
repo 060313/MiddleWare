@@ -18,16 +18,23 @@ namespace sched {
                                 const std::string& cpuStatPath,const std::string& npuStatPath,
                                 int cpuFreqMin,int cpuFreqMax,
                                 int npuFreqMin,int npuFreqMax) {
-        cpu_ = std::make_unique<CPU>(cpuFreqPath, cpuStatPath, cpuFreqMin, cpuFreqMax);
-        npu_ = std::make_unique<NPU>(npufreqPath, npuStatPath, npuFreqMin, npuFreqMax);
+                                    
+        std::string cpuFreq = cpuFreqPath.empty() ? std::string(CPU_FREQ_PATH) : cpuFreqPath;
+        std::string cpuStat = cpuStatPath.empty() ? std::string(CPU_STAT_PATH) : cpuStatPath;
+        std::string npuFreq = npufreqPath.empty() ? std::string(NPU_FREQ_PATH) : npufreqPath;
+        std::string npuStat = npuStatPath.empty() ? std::string(NPU_STAT_PATH) : npuStatPath;
+
+        cpu_ = std::make_unique<CPU>(cpuFreq,cpuStat,cpuFreqMin, cpuFreqMax);
+        npu_ = std::make_unique<NPU>(npuFreq,npuStat,npuFreqMin, npuFreqMax);
 
         systemInfo_ = SystemInfo{};
     }
 
     systemManager::~systemManager() = default;
 
-    void systemManager::askSystemInfo(SystemInfo& out) {
+    ResultInfo systemManager::askSystemInfo(SystemInfo& out) {
         withSysLock([&](){out=systemInfo_;});
+        return withSysLock([&](){return infoState;});
     }
 
     bool systemManager::refreshSystemInfo() {
@@ -37,15 +44,17 @@ namespace sched {
 
         // 读设备不持锁（各自读失败按零值兜底，不中断采集）
         NPUInfo npuInfo;
-        npu_->getNPUInfo(npuInfo);
+        ResultInfo npuRes = npu_->getNPUInfo(npuInfo);
         CPUInfo cpuInfo;
-        cpu_->getCPUInfo(cpuInfo);
+        ResultInfo cpuRes =cpu_->getCPUInfo(cpuInfo);
 
         withSysLock([&](){
             systemInfo_.ucpu = cpuInfo.util;
             systemInfo_.unpu = npuInfo.util;
             systemInfo_.cpuFreqKHz = cpuInfo.curFreqKHz;
             systemInfo_.npuFreqKHz = npuInfo.curFreqKHz;
+            if(cpuRes.ok&&npuRes.ok) infoState=ResultInfo{true,std::string(),Reason::none};
+            else infoState=ResultInfo{false,"get system info false",Reason::getStateFalse};
         });
         return true;
     }

@@ -24,7 +24,7 @@ class deviceFile {
         deviceFile(std::string freqPath,std::string statPath,int freqMin,int freqMax);
         virtual ~deviceFile()=default;
     protected:
-        virtual void refreshInfo()=0;
+        virtual ResultInfo refreshInfo()=0;
         virtual ResultInfo setFreq(const Freq& freq)=0;
 
         template<typename LockFn>

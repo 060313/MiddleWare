@@ -20,24 +20,29 @@
 namespace sched {
     NPU::~NPU() = default;
 
-    void NPU::getNPUInfo(NPUInfo& out) {
-        refreshInfo();                              
+    ResultInfo NPU::getNPUInfo(NPUInfo& out) {
+        ResultInfo info=refreshInfo();                              
         withNPULock([&](){ out = npuInfo_; }); 
+        return info;
     }
 
-    void NPU::refreshInfo() {
+    ResultInfo NPU::refreshInfo() {
+        ResultInfo res=ResultInfo{true, std::string(), Reason::none};
         bool needRead = withNPULock([&](){return freqTable_.empty();});
-        if (needRead) readFreqTable(1000,[this](auto&& fn){ return withNPULock(fn); });
+        bool readOK=true;
+        if (needRead) readOK=readFreqTable(1000, [this](auto&& fn){ return withNPULock(fn); });
+        if(!readOK) res=ResultInfo{false,"read frequency table false",Reason::refreshInfoFalse};
 
         // 读当前频率（锁外 I/O，原生 Hz → ÷1000）；读失败保留旧值
         long long readHz = 0;
         if (parseInt(FileService::read(freqPath_ + "/cur_freq"), readHz))
             withNPULock([&](){npuInfo_.curFreqKHz = static_cast<int>(readHz / 1000);});
+        else
+            res=ResultInfo{false,"refresh frequency buffer false",Reason::refreshInfoFalse};
 
         // load 节点由驱动可选导出，读失败或不可解析 → util 保持 0（不中断采集）
         long long load = 0;
         double util = 0.0;
-        bool utilOK = false;
         if (parseInt(FileService::read(statPath_ + "/load"), load)){
                 util = static_cast<double>(load) / 100.0;
                 if (util < 0.0) {
@@ -46,9 +51,11 @@ namespace sched {
                 if (util > 1.0) {
                     util = 1.0;
                 }
-                utilOK = true;
-        }
-        withNPULock([&](){if(utilOK) npuInfo_.util=util;});
+                withNPULock([&](){npuInfo_.util=util;});
+        }else
+            res=ResultInfo{false,"read state false",Reason::refreshInfoFalse};
+
+        return res;
     }
 
     ResultInfo NPU::setFreq(const Freq& freq) {

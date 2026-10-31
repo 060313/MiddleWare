@@ -32,9 +32,9 @@ public:
     ~NPU() override;
 
     // 出参写本次采样（内部 refreshInfo 采样后持 npuLock_ 拷出）；**不返回引用**，锁外触碰不到内部状态
-    void getNPUInfo(NPUInfo& out);
+    ResultInfo getNPUInfo(NPUInfo& out);
     
-    void refreshInfo() override;
+    ResultInfo refreshInfo() override;
     ResultInfo setFreq(const Freq& freq) override;
 
 private:
