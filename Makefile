@@ -87,7 +87,7 @@ ifneq ($(strip $(TEST_SRCS)),)
 	@for t in $(TEST_SRCS); do \
 	    name=$$(basename $$t .cpp); \
 	    echo "编译测试: $$name"; \
-	    $(CXX) $(CXXFLAGS) $(INC) $$t $$(filter-out $(MAIN_OBJ),$(LIB_OBJS)) \
+	    $(CXX) $(CXXFLAGS) $(INC) $$t $(filter-out $(MAIN_OBJ),$(LIB_OBJS)) \
 	        -o $(BUILD)/$$name $(LDFLAGS) $(ONNX_LIBS) || exit 1; \
 	    echo "运行测试: $$name"; \
 	    $(BUILD)/$$name || exit 1; \

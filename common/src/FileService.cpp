@@ -9,6 +9,9 @@
 
 #include "common/include/FileService.h"
 
+#include <unistd.h>
+
+#include <algorithm>
 #include <cstddef>
 #include <fstream>
 
@@ -34,8 +37,10 @@ std::string FileService::read(const std::string& path) {
     // S3. 循环读到 EOF（不看 st_size）
     std::string content;
     char buf[kChunkSize];
-    while (ifs.good() && content.size() < kMaxFileSize) {
-        ifs.read(buf, static_cast<std::streamsize>(kChunkSize));
+    while (content.size() < kMaxFileSize) {
+        // 末块按剩余额度取，保证**恰好**不越过 1 MiB（一次性 append 会多读一块）
+        const std::size_t want = std::min(kChunkSize, kMaxFileSize - content.size());
+        ifs.read(buf, static_cast<std::streamsize>(want));
         const std::streamsize got = ifs.gcount();
         if (got <= 0) {
             break;
@@ -71,9 +76,9 @@ bool FileService::exists(const std::string& path) {
         return false;
     }
 
-    // S2. 以「能否打开」判可访问性（不区分文件 / 目录 / 节点）
-    std::ifstream ifs(path, std::ios::in | std::ios::binary);
-    return ifs.is_open();
+    // S2. access(F_OK) 判存在性：只查元数据、**不打开文件**。
+    //     用 ifstream 探测会把 FIFO / 字符设备真的打开，可能永久阻塞在 open() 上
+    return ::access(path.c_str(), F_OK) == 0;
 }
 
 } // namespace sched
