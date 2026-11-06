@@ -23,3 +23,7 @@ schedd
 
 software-degin-documents
 software-degin-documents/*
+
+# 子目录测试源码（上面的 *_test 会误伤名为 xxx_test 的目录，这里放行）
+!test/system_tests/
+!test/system_tests/**

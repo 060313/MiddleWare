@@ -58,6 +58,10 @@ MAIN_OBJ  := $(patsubst $(ROOT)/%.cpp,$(BUILD)/%.o,$(ROOT)/app/src/main.cpp)
 # ONNX Runtime 库（硬依赖）
 ONNX_LIBS := -L$(ONNXRUNTIME_ROOT)/lib -lonnxruntime
 
+# 测试二进制会随统一链接集带上 libonnxruntime，运行期需能找到它；
+# 容器内 SDK 的 lib/ 不在默认搜索路径，故写入 rpath（随 ONNXRUNTIME_ROOT 走）。
+TEST_RPATH := -Wl,-rpath,$(ONNXRUNTIME_ROOT)/lib
+
 # ---------------------------------------------------------------------------
 # 目标
 # ---------------------------------------------------------------------------
@@ -78,17 +82,25 @@ $(BUILD)/%.o: $(ROOT)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INC) -c $< -o $@
 
-# 单元测试（test/ 下若存在 *_test.cpp 则编译运行）
-TEST_SRCS := $(wildcard $(ROOT)/test/*_test.cpp)
+# 单元测试（test/ 下若存在 *_test.cpp 则编译运行；递归收集子目录，如 test/system_tests/xxx_test/）
+# 同一测试目录下的辅助 .cpp（用例、桩）与驱动一并编译：除 *_test.cpp 外全部收集
+TEST_SRCS := $(wildcard $(ROOT)/test/*_test.cpp) \
+             $(wildcard $(ROOT)/test/*/*_test.cpp) \
+             $(wildcard $(ROOT)/test/*/*/*_test.cpp)
 TEST_INC  := -I$(ROOT)/test
 
 test: $(SCHEDD_BIN)
 ifneq ($(strip $(TEST_SRCS)),)
 	@for t in $(TEST_SRCS); do \
 	    name=$$(basename $$t .cpp); \
+	    d=$$(dirname $$t); \
+	    aux=""; \
+	    for f in $$d/*.cpp; do \
+	        case "$$f" in *_test.cpp) ;; *) aux="$$aux $$f";; esac; \
+	    done; \
 	    echo "编译测试: $$name"; \
-	    $(CXX) $(CXXFLAGS) $(INC) $$t $$(filter-out $(MAIN_OBJ),$(LIB_OBJS)) \
-	        -o $(BUILD)/$$name $(LDFLAGS) $(ONNX_LIBS) || exit 1; \
+	    $(CXX) $(CXXFLAGS) $(INC) $$t $$aux $(filter-out $(MAIN_OBJ),$(LIB_OBJS)) \
+	        -o $(BUILD)/$$name $(LDFLAGS) $(TEST_RPATH) $(ONNX_LIBS) || exit 1; \
 	    echo "运行测试: $$name"; \
 	    $(BUILD)/$$name || exit 1; \
 	done

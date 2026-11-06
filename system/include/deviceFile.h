@@ -21,7 +21,9 @@ namespace sched {
 
 class deviceFile {
     public:
-        deviceFile(std::string freqPath,std::string statPath,int freqMin,int freqMax);
+        deviceFile(std::string freqPath,std::string statPath,int freqMin,int freqMax): 
+                freqPath_(std::move(freqPath)),statPath_(std::move(statPath)),
+                freqMin_(freqMin),freqMax_(freqMax) {}
         virtual ~deviceFile()=default;
     protected:
         virtual ResultInfo refreshInfo()=0;
