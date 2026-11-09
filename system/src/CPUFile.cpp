@@ -9,11 +9,11 @@
 
 namespace sched{
 
-openEulerCPUFile::openEulerCPUFile(const std::string& freqPath, const std::string& statPath,
-                                   int freqMin, int freqMax)
-    : deviceFile(freqPath, statPath, freqMin, freqMax) {}
+    openEulerCPUFile::openEulerCPUFile(const std::string& freqPath, const std::string& statPath,
+                                    int freqMin, int freqMax)
+        : deviceFile(freqPath, statPath, freqMin, freqMax) {}
 
-openEulerCPUFile::~openEulerCPUFile() = default;
+    openEulerCPUFile::~openEulerCPUFile() = default;
 
     bool openEulerCPUFile::parseProcStat(const std::string& content, uint64_t& total, uint64_t& idle){
         //提取文件第一行

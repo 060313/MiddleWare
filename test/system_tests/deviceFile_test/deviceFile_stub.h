@@ -32,20 +32,11 @@ namespace test {
 namespace devicefile {
 
 namespace fs = std::filesystem;
-
 using Ints = std::vector<int>;
-
-// 伪节点树根目录：相对路径，要求以仓库根为 cwd 运行（与 make test 一致）
 inline const std::string kRoot = "build/test_fake_devicefile";
 
-// ---------------------------------------------------------------------------
-// 测试替身
-// ---------------------------------------------------------------------------
-
-// 基类替身：暴露 readFreqTable 与四个受保护成员
 class DeviceFileProbe : public sched::deviceFile {
 public:
-    // 基类构造无默认值，替身补默认参数，用例里可只关注关心的那几项
     DeviceFileProbe(const std::string& freqPath, const std::string& statPath = "",
                     int freqMin = 0, int freqMax = 0)
         : deviceFile(freqPath, statPath, freqMin, freqMax) {}
