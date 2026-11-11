@@ -12,13 +12,16 @@ static_assert(std::is_abstract_v<sched::deviceFile>,
 static_assert(std::has_virtual_destructor_v<sched::deviceFile>,
               "deviceFile 必须可经基类指针安全析构");
 
-// 测试驱动：只负责编排两个用例并汇总退出码，用例体与被测对象都在别处
+// 测试驱动：只负责编排三个用例并汇总退出码，用例体与被测对象都在别处
 int main() {
     std::printf("== S001 初始化测试\n");
     int fatal = df::initTest();
 
-    std::printf("\n== S002 频率表测试\n");
-    fatal += df::freqTableTest();
+    std::printf("\n== S002 频率表文件解析测试\n");
+    fatal += df::freqTableParseTest();
+
+    std::printf("\n== S003 频率表测试\n");
+    fatal += df::readFreqTableTest();
 
     std::printf("\n%s\n", fatal == 0 ? "== all tests passed" : "== some tests failed");
     return fatal == 0 ? 0 : 1;

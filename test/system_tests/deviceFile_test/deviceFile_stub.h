@@ -9,6 +9,8 @@
 //   - 伪节点树夹具：caseDir / put / dropNode，在 build/test_fake_devicefile/ 下
 //     按用例号建目录，冒充 cpufreq 挂点（FileService 只拼类里持有的路径，
 //     故换路径即可换掉整个设备，无需 mock 框架）；
+//     —— S001~S003 走的是 deviceFile_cases/ 下的真实样例文件，这三样暂未启用，
+//     留给后续覆盖 refreshInfo / setFreq 的套件（那里需要“节点消失/写入失败”的现场）。
 //   - 断言辅助：dump / checkTable / CHECK_TABLE / sortedUniquePositive。
 //
 // **不改生产代码、不加测试钩子**；被测对象由用例就地构造，驱动只负责编排。

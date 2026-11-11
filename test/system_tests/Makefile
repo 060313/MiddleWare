@@ -43,6 +43,7 @@ all: $(addprefix run-,$(SUITES))
 list:
 	@echo suites: $(SUITES)
 	@echo sources: $(MW_SRC)
+	@echo cases: deviceFile_test/deviceFile_cases/initCase + freqTableCases/case0..9 + xpuCases/case0..4
 
 clean:
 	rm -rf $(BUILD)
