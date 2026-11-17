@@ -9,11 +9,14 @@
 //     （UDSService 自持一份运行期副本供 stop() unlink，属实现必需，不是第二真相源）；
 //   - UDSService 为全静态类：无实例可创建，监听与循环都以类名调静态方法；
 //   - `running` 是**服务生命周期**标志，只管本门面的前置与 serve 的生命期，
-//     **不承担监控线程开关**（D-36）。
+//     **不承担监控线程开关**（D-36）；
+//   - 业务三方法（taskAsk / getSystemInfo / setModel）在同一把互斥锁下**串行化**，
+//     并发请求在本类入口排队、不进入 Agent 链路（§3.1 并发语义裁决）。
 
 #ifndef SCHED_SERVICE_SERVICEINTERFACE_H
 #define SCHED_SERVICE_SERVICEINTERFACE_H
 
+#include <mutex>
 #include <string>
 
 #include "common/include/SchedTypes.h"
@@ -55,7 +58,9 @@ public:
 
 private:
     // UDSService 的回调入口：入参只有「报文类型 + 纯载荷」，**不含 8 字节帧头**（D-27）；
-    // 按类型分派到 taskAsk / getSystemInfo / setModel，结果编为四键外壳返回。
+    // 返回**四键外壳 JSON（ok / code / message / data）**，同样**不加帧头**——
+    // 加头由 UDSService::route S4 统一完成（§4.6.2 / §4.6.6）。
+    // 按类型分派到 taskAsk / getSystemInfo / setModel，并做错误码映射（D-33）。
     std::string handleFrame(const std::string& type, const std::string& payload);
 
     // 设计文档中该属性名为 schedManager（与类同名）；C++ 里同名会遮蔽类型名，
@@ -64,6 +69,13 @@ private:
     bool running_ = false;              // 服务运行标志
     std::string socketPath_;            // 配置来源唯一（UDSService 另持运行期副本）
     int maxConn_ = 16;                  // UDS 并发连接上限
+
+    // 业务侧串行化（§3.1）：保护 manager_ 之后的 Agent 链路——
+    // 其共享 schedManager::failCount / model 与 decisionMaker 的推理会话，
+    // 且 getSystemInfo 经 monitor->getSystemInfo() 会触发采样（有副作用），
+    // 串行化同时保证快照一致。当前 UDS 为单线程 epoll 循环，本锁无竞争；
+    // 保留它是把「串行化」这一契约写在代码里，传输层改多线程后仍然成立。
+    std::mutex bizMutex_;
 };
 
 } // namespace sched
