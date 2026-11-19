@@ -107,5 +107,5 @@ serviceInterface ──依赖──► UDSService（静态）
 | `FileService` / `Timer` | ✅ 已实现（`test/fileservice_test.cpp` / `test/timer_test.cpp`） |
 | `serviceInterface::handleFrame` | ✅ 已实现：四键外壳与 JSON 编解码、错误码映射 |
 | `CPU` / `NPU` | 设备文件封装（`deviceFile`/`CPUFile`/`NPUFile`、频率表解析）已实现；sysfs 实读、`/proc/stat` 差分与 governor 联调待补 |
-| `ContractFile` | 待补：契约 JSON 解析 |
+| `ContractFile` | ✅ 已实现：契约 JSON 解析与两道校验（`test/data_test.cpp`，依赖 `common/include/Json.h`） |
 | `decisionMaker`（特征编码/动作解码） | ✅ 已实现（`test/decision_maker_test.cpp` 等三个单测） |
