@@ -1,0 +1,24 @@
+{
+  "input_dim": 9,
+  "output_dim": 7,
+  "input_fields": [
+    {"name": "phase",        "source": "task",   "raw_min": 0,       "raw_max": 1,       "min": 0.0, "max": 1.0},
+    {"name": "prompt_len",   "source": "task",   "raw_min": 0,       "raw_max": 8192,    "min": 0.0, "max": 1.0},
+    {"name": "batch_tokens", "source": "task",   "raw_min": 0,       "raw_max": 2048,    "min": 0.0, "max": 1.0},
+    {"name": "n_remaining",  "source": "task",   "raw_min": 0,       "raw_max": 8192,    "min": 0.0, "max": 1.0},
+    {"name": "kv_ratio",     "source": "task",   "raw_min": 0,       "raw_max": 1,       "min": 0.0, "max": 1.0},
+    {"name": "ucpu",         "source": "system", "raw_min": 0,       "raw_max": 1,       "min": 0.0, "max": 1.0},
+    {"name": "unpu",         "source": "system", "raw_min": 0,       "raw_max": 1,       "min": 0.0, "max": 1.0},
+    {"name": "cpu_freq_khz", "source": "system", "raw_min": 408000,  "raw_max": 2256000, "min": 0.0, "max": 1.0},
+    {"name": "npu_freq_khz", "source": "system", "raw_min": 300000,  "raw_max": 1000000, "min": 0.0, "max": 1.0}
+  ],
+  "actions": [
+    {"device": "cpu", "freq_khz": 408000},
+    {"device": "cpu", "freq_khz": 1008000},
+    {"device": "cpu", "freq_khz": 1800000},
+    {"device": "cpu", "freq_khz": 2256000},
+    {"device": "npu", "freq_khz": 300000},
+    {"device": "npu", "freq_khz": 600000},
+    {"device": "npu", "freq_khz": 1000000}
+  ]
+}
