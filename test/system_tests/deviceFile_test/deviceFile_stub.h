@@ -116,10 +116,10 @@ inline std::string dump(const Ints& values) {
 inline void checkTable(const Ints& actual, const Ints& expected,
                        const char* expr, const char* file, int line) {
     if (actual == expected) {
-        test::check(true, expr, file, line);
+        ::test::check(true, expr, file, line);
         return;
     }
-    test::check(false, expr, file, line);
+    ::test::check(false, expr, file, line);
     std::printf("         实际 = %s\n         期望 = %s\n",
                 dump(actual).c_str(), dump(expected).c_str());
 }
