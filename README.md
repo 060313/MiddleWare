@@ -98,12 +98,14 @@ serviceInterface ──依赖──► UDSService（静态）
 框架完成、装配层可运行：`schedd --config <路径>` 会读配置 → 装配 13 类 → 首次加载模型 →
 建监听 → 起两线程 → 等 `SIGTERM`。Service 层（`serviceInterface`）已实现完毕——三类报文的
 载荷编解码、四键外壳、错误码映射与业务串行化均在位（§3.1 / §4.6），不依赖第三方 JSON 库。
+各子系统按分工逐步落地实现与单元测试（`make test`）：
 
-待填充的实现集中在四处：
-
-| 模块 | 待补内容 |
+| 模块 | 状态 |
 |---|---|
-| `UDSService` | epoll 事件循环、切帧、半帧超时、帧头验/剥/加 |
-| `ONNXruntime` | 会话建立、`Run` 调用、超时取消（`SetOptions` + 看护线程）、输入维读取 |
-| `CPU` / `NPU` | sysfs 节点读写、`/proc/stat` 差分、`governor` 切换 |
-| `ContractFile` | 契约 JSON 解析 |
+| `UDSService` | ✅ 已实现：epoll 事件循环、切帧、半帧超时、帧头验/剥/加（`test/udsservice_test.cpp`） |
+| `ONNXruntime` | ✅ 已实现：会话建立、`Run` 调用、超时取消（局部 `RunOptions` + 看护线程）、输入维读取（`test/onnxruntime_test.cpp`） |
+| `FileService` / `Timer` | ✅ 已实现（`test/fileservice_test.cpp` / `test/timer_test.cpp`） |
+| `serviceInterface::handleFrame` | ✅ 已实现：四键外壳与 JSON 编解码、错误码映射 |
+| `CPU` / `NPU` | 设备文件封装（`deviceFile`/`CPUFile`/`NPUFile`、频率表解析）已实现；sysfs 实读、`/proc/stat` 差分与 governor 联调待补 |
+| `ContractFile` | 待补：契约 JSON 解析 |
+| `decisionMaker`（特征编码/动作解码） | ✅ 已实现（`test/decision_maker_test.cpp` 等三个单测） |
