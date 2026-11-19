@@ -96,7 +96,10 @@ serviceInterface ──依赖──► UDSService（静态）
 ## 状态
 
 框架完成、装配层可运行：`schedd --config <路径>` 会读配置 → 装配 13 类 → 首次加载模型 →
-建监听 → 起两线程 → 等 `SIGTERM`。待填充的实现集中在四处：
+建监听 → 起两线程 → 等 `SIGTERM`。Service 层（`serviceInterface`）已实现完毕——三类报文的
+载荷编解码、四键外壳、错误码映射与业务串行化均在位（§3.1 / §4.6），不依赖第三方 JSON 库。
+
+待填充的实现集中在四处：
 
 | 模块 | 待补内容 |
 |---|---|
@@ -104,4 +107,3 @@ serviceInterface ──依赖──► UDSService（静态）
 | `ONNXruntime` | 会话建立、`Run` 调用、超时取消（`SetOptions` + 看护线程）、输入维读取 |
 | `CPU` / `NPU` | sysfs 节点读写、`/proc/stat` 差分、`governor` 切换 |
 | `ContractFile` | 契约 JSON 解析 |
-| `serviceInterface::handleFrame` | 四键外壳与 JSON 编解码、错误码映射 |
