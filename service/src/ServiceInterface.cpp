@@ -66,12 +66,6 @@ JV jObj() {
     return j;
 }
 
-JV jArr() {
-    JV j;
-    j.kind = JV::Kind::Arr;
-    return j;
-}
-
 void put(JV& object, const std::string& key, JV value) {
     object.obj.emplace_back(key, std::move(value));
 }
@@ -456,6 +450,8 @@ const char* reasonName(Reason r) {
     case Reason::deviceUnknown:     return "unknown_device";
     case Reason::freqUnavailable:   return "freq_unavailable";
     case Reason::writeFailed:       return "write_failed";
+    case Reason::refreshInfoFalse:  return "refresh_info_false";
+    case Reason::getStateFalse:     return "get_state_false";
     }
     return "none";
 }
@@ -470,6 +466,8 @@ int reasonToCode(Reason r) {
     case Reason::deviceUnknown:     return 3001;
     case Reason::freqUnavailable:   return 3002;
     case Reason::writeFailed:       return 3003;
+    case Reason::refreshInfoFalse:  return 3004;
+    case Reason::getStateFalse:     return 3004;
     }
     return 2002;                        // 兜底归入推理失败，绝不回 0 冒充成功
 }
@@ -477,15 +475,6 @@ int reasonToCode(Reason r) {
 // ---------------------------------------------------------------------------
 // 载荷编码（顶层键见 §4.6.4；data 内字段由实现层定义）
 // ---------------------------------------------------------------------------
-JV freqTableToJson(const std::vector<int>& table) {
-    JV arr = jArr();
-    arr.arr.reserve(table.size());
-    for (const int f : table) {
-        arr.arr.push_back(jNum(f));
-    }
-    return arr;
-}
-
 JV actionInfoToJson(const ActionInfo& ai) {
     JV root = jObj();
 
@@ -497,7 +486,6 @@ JV actionInfoToJson(const ActionInfo& ai) {
     JV result = jObj();
     put(result, "ok", jBool(ai.result.ok));
     put(result, "message", jStr(ai.result.message));
-    put(result, "adjusted", jBool(ai.result.adjusted));
     put(result, "reason", jStr(reasonName(ai.result.reason)));
     put(root, "result", std::move(result));
 
@@ -511,18 +499,6 @@ JV actionInfoToJson(const ActionInfo& ai) {
 JV snapshotToJson(const SystemStateSnapshot& snap) {
     JV root = jObj();
     JV system = jObj();
-
-    JV cpu = jObj();
-    put(cpu, "util", jNum(snap.system.cpuInfo.util));
-    put(cpu, "cur_freq_khz", jNum(snap.system.cpuInfo.curFreqKHz));
-    put(cpu, "freq_table", freqTableToJson(snap.system.cpuInfo.freqTable));
-    put(system, "cpu", std::move(cpu));
-
-    JV npu = jObj();
-    put(npu, "util", jNum(snap.system.npuInfo.util));
-    put(npu, "cur_freq_khz", jNum(snap.system.npuInfo.curFreqKHz));
-    put(npu, "freq_table", freqTableToJson(snap.system.npuInfo.freqTable));
-    put(system, "npu", std::move(npu));
 
     put(system, "u_cpu", jNum(snap.system.ucpu));
     put(system, "u_npu", jNum(snap.system.unpu));
