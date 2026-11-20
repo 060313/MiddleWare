@@ -24,7 +24,7 @@
 
 #include "common/include/FileService.h"
 #include "common/include/UDSService.h"
-#include "test_util_reg.h"
+#include "test/test_util_reg.h"
 
 using sched::FileService;
 using sched::UDSService;

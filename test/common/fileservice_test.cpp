@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "common/include/FileService.h"
-#include "test_util_reg.h"
+#include "test/test_util_reg.h"
 
 using sched::FileService;
 

@@ -49,6 +49,8 @@ ALL_OBJS := $(COMMON_OBJS) $(DATA_OBJS) $(AGENT_OBJS) $(SYSTEM_OBJS) $(SERVICE_O
 # app/src/main.cpp 单独链接进可执行文件，不进入通用对象池
 LIB_SRCS := $(filter-out $(ROOT)/app/src/main.cpp,$(ALL_SRCS))
 
+# 注意：TEST_INC 必须定义在 INC 之前——INC 用 := 立即展开，后置定义会被展开成空
+TEST_INC  := -I$(ROOT)/test
 INC := $(COMMON_INC) $(DATA_INC) $(AGENT_INC) $(SYSTEM_INC) $(SERVICE_INC) $(APP_INC) $(TEST_INC)
 
 # 库对象（除 main）
@@ -87,7 +89,6 @@ $(BUILD)/%.o: $(ROOT)/%.cpp
 TEST_SRCS := $(wildcard $(ROOT)/test/*_test.cpp) \
              $(wildcard $(ROOT)/test/*/*_test.cpp) \
              $(wildcard $(ROOT)/test/*/*/*_test.cpp)
-TEST_INC  := -I$(ROOT)/test
 
 test: $(SCHEDD_BIN)
 ifneq ($(strip $(TEST_SRCS)),)

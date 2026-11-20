@@ -14,7 +14,7 @@
 #include <thread>
 
 #include "common/include/Timer.h"
-#include "test_util_reg.h"
+#include "test/test_util_reg.h"
 
 using sched::Timer;
 using namespace std::chrono_literals;

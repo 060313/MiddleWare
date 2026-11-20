@@ -20,7 +20,7 @@
 #include "common/include/FileService.h"
 #include "common/include/ONNXruntime.h"
 #include "common/include/SchedDefs.h"
-#include "test_util_reg.h"
+#include "test/test_util_reg.h"
 
 using sched::FileService;
 using sched::ONNXruntime;
