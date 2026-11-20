@@ -4,8 +4,8 @@
 // 本类是 Agent 通往 System 的唯一出口，且**只作通道**：测试重点不是设备行为，
 // 而是「未装配时的兜底」与「转发时一个字段都不加工」。
 //
-// 注：CPU / NPU 的节点 I/O 尚未实现，档位表为空，故经 systemManager
-// 路由后的结果是 3002（档位表不可用）——正好用来验证 reason 是否被原样透传。
+// 注：mgr 以空路径构造（不指向真实 sysfs），首次 setFreq 懒加载读表失败、
+// 档位表为空，故结果是 3002（档位表不可用）——正好用来验证 reason 是否被原样透传。
 
 #include <string>
 
@@ -24,8 +24,6 @@ TEST_CASE(get_system_info_without_system_returns_zero) {
     CHECK_NEAR(info.unpu, 0.0, 1e-9);
     CHECK_EQ(info.cpuFreqKHz, 0);
     CHECK_EQ(info.npuFreqKHz, 0);
-    CHECK(info.cpuInfo.freqTable.empty());
-    CHECK(info.npuInfo.freqTable.empty());
 }
 
 TEST_CASE(set_freq_without_system_reports_scheduler_absent) {
@@ -36,7 +34,6 @@ TEST_CASE(set_freq_without_system_reports_scheduler_absent) {
 
     const ResultInfo result = monitor.setFreq(freq);
     CHECK(!result.ok);
-    CHECK(!result.adjusted);
     CHECK_EQ(result.reason, Reason::schedulerAbsent);
     CHECK_EQ(result.message, std::string("monitor not ready"));
 }

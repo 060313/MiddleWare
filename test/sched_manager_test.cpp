@@ -123,7 +123,6 @@ TEST_CASE(action_info_mirrors_result_fields) {
     CHECK_EQ(info.ok, info.result.ok);
     CHECK_EQ(info.message, info.result.message);
     CHECK_EQ(info.reason, info.result.reason);
-    CHECK(!info.result.adjusted);
 }
 
 int main() {
