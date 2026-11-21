@@ -27,6 +27,9 @@ software-degin-documents/*
 # 子目录测试源码（上面的 *_test 会误伤名为 xxx_test 的目录，这里放行）
 !test/system_tests/
 !test/system_tests/**
+!test/syntax_test/
+!test/syntax_test/**
 
-# 但 system_tests 下的编译产物仍应忽略（上两条白名单会把 build/ 捞回来）
+# 但上述目录下的编译产物仍应忽略（白名单会把 build/ 捞回来）
 test/system_tests/build/
+test/syntax_test/build/
